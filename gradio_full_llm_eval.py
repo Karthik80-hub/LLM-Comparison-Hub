@@ -1,1101 +1,336 @@
-import os
-import csv
-from openai import OpenAI
-import anthropic
-import google.generativeai as genai
-from dotenv import load_dotenv
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
 import gradio as gr
+import os
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from datetime import datetime
+import json
+
+# Import modules from existing files
+from response_generator import generate_all_responses
+from round_robin_evaluator import comprehensive_round_robin_evaluation, save_comprehensive_results
 from realtime_detector import is_realtime_prompt
 from search_fallback import get_google_snippets
-import plotly.graph_objects as go
-import numpy as np
-from datetime import datetime
-import time
-import glob
-import traceback
-import json
-import requests
+from llm_prompt_eval_analysis import generate_visualizations, analyze_evaluation_data
 
-# Load environment variables from .env file
+# Load environment variables
+from dotenv import load_dotenv
 load_dotenv()
 
-def verify_api_keys():
-    """Verify that all required API keys are loaded correctly."""
-    print("\nVerifying API keys...")
+def check_api_keys():
+    """Check if all required API keys are available."""
+    keys_status = {}
     
-    # Check OpenAI API key
-    openai_key = os.getenv('OPENAI_API_KEY')
-    if openai_key:
-        print("✓ OPENAI_API_KEY found")
-        try:
-            client = OpenAI(api_key=openai_key)
-            # Test API key with a simple request
-            models = client.models.list()
-            print("✓ OpenAI API key is valid")
-        except Exception as e:
-            print(f"✗ OpenAI API key error: {str(e)}")
-    else:
-        print("✗ OPENAI_API_KEY not found")
+    # Check OpenAI
+    openai_key = os.getenv("OPENAI_API_KEY")
+    keys_status["OpenAI (GPT-4)"] = "Available" if openai_key else "Missing"
     
-    # Check Anthropic API key
-    anthropic_key = os.getenv('CLAUDE_API_KEY')
-    if anthropic_key:
-        print("✓ CLAUDE_API_KEY found")
-        try:
-            client = anthropic.Anthropic(api_key=anthropic_key)
-            # Test API key with a simple request
-            models = client.models.list()
-            print("✓ Claude API key is valid")
-        except Exception as e:
-            print(f"✗ Claude API key error: {str(e)}")
-    else:
-        print("✗ CLAUDE_API_KEY not found")
+    # Check Claude
+    claude_key = os.getenv("CLAUDE_API_KEY")
+    keys_status["Claude 3"] = "Available" if claude_key else "Missing"
     
-    # Check Google API key
-    google_key = os.getenv('GEMINI_API_KEY')
-    if google_key:
-        print("✓ GEMINI_API_KEY found")
-        try:
-            genai.configure(api_key=google_key)
-            # Test API key by listing available models
-            models = [model for model in genai.list_models() if 'generateContent' in model.supported_generation_methods]
-            print(f"✓ Gemini API key is valid. Available models: {[model.name for model in models]}")
-        except Exception as e:
-            print(f"✗ Gemini API key error: {str(e)}")
-    else:
-        print("✗ GEMINI_API_KEY not found")
-
-CSV_FILE = "ai_prompt_eval_template.csv"
-FIELDNAMES = ["prompt", "model", "response", "helpfulness", "correctness", "coherence", "tone_score", 
-              "accuracy", "relevance", "completeness", "clarity", "bias_flag", "notes", "reasoning"]
-
-# Create results directory at startup with absolute path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-results_dir = os.path.join(current_dir, 'results')
-os.makedirs(results_dir, exist_ok=True)
-print(f"Results directory created at: {results_dir}")
-
-def format_metrics_text(metrics_dict):
-    """Format metrics dictionary into markdown text."""
-    if not metrics_dict:
-        return "No metrics available"
+    # Check Gemini
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    keys_status["Gemini 1.5"] = "Available" if gemini_key else "Missing"
     
-    # Extract only the metrics, not reasoning and notes
-    metrics = {k: v for k, v in metrics_dict.items() if k in [
-        'helpfulness', 'correctness', 'coherence', 'tone_score',
-        'accuracy', 'relevance', 'completeness', 'clarity'
-    ]}
+    # Check Google Search (optional)
+    google_key = os.getenv("GOOGLE_API_KEY")
+    google_cse = os.getenv("GOOGLE_CSE_ID")
+    keys_status["Google Search"] = "Available" if (google_key and google_cse) else "Missing"
     
-    # Format metrics text
-    metrics_text = "### Evaluation Metrics\n\n"
-    metrics_text += "#### Scores\n"
-    for metric, score in metrics.items():
-        metrics_text += f"- {metric.replace('_', ' ').title()}: {score:.2f}\n"
+    return keys_status
+
+def process_prompt(prompt, enable_realtime_detection, enable_evaluation, enable_analysis):
+    """Process a prompt through the complete pipeline."""
+    if not prompt.strip():
+        return "Please enter a prompt.", None, None, None, None, None
     
-    return metrics_text
-
-def save_to_csv(df, prompt):
-    """Save evaluation results to CSV with timestamp."""
-    try:
-        # Create results directory if it doesn't exist
-        os.makedirs('results', exist_ok=True)
-        
-        # Add prompt to DataFrame
-        df['prompt'] = prompt
-        
-        # Generate timestamp for filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f'results/ai_prompt_eval_{timestamp}.csv'
-        
-        # Save to CSV
-        df.to_csv(filename, index=True)
-        print(f"Results saved to {filename}")
-        return filename
-    except Exception as e:
-        print(f"Error saving to CSV: {str(e)}")
-        return None
-
-def update_visualizations(metrics_df, correlation_threshold, metric_weight):
-    """Update all visualizations based on the metrics DataFrame and control parameters."""
-    try:
-        print("\nUpdating visualizations...")
-        print("Input DataFrame shape:", metrics_df.shape)
-        print("Input DataFrame columns:", metrics_df.columns.tolist())
-        
-        # Define the metrics we want to visualize
-        metrics_to_plot = [
-            'helpfulness', 'correctness', 'coherence', 'tone_score',
-            'accuracy', 'relevance', 'completeness', 'clarity'
-        ]
-        
-        # Ensure all required metrics are present
-        for metric in metrics_to_plot:
-            if metric not in metrics_df.columns:
-                print(f"Warning: {metric} not found in DataFrame, adding with default value 0.5")
-                metrics_df[metric] = 0.5
-        
-        # Create a copy of the DataFrame with only numeric columns
-        numeric_df = metrics_df[metrics_to_plot].copy()
-        
-        # Ensure all values are numeric and between 0 and 1
-        for col in numeric_df.columns:
-            numeric_df[col] = pd.to_numeric(numeric_df[col], errors='coerce').fillna(0.5)
-            numeric_df[col] = numeric_df[col].clip(0, 1)
-        
-        # Apply metric weight
-        if metric_weight != 1.0:
-            print(f"Applying metric weight: {metric_weight}")
-            numeric_df = numeric_df * metric_weight
-        
-        print("Processed numeric DataFrame shape:", numeric_df.shape)
-        print("Processed numeric DataFrame columns:", numeric_df.columns.tolist())
-        
-        # Create correlation heatmap
-        print("Creating correlation heatmap...")
-        plt.figure(figsize=(10, 8))
-        corr_matrix = numeric_df.corr()
-        mask = np.abs(corr_matrix) < correlation_threshold
-        sns.heatmap(corr_matrix, 
-                   mask=mask,
-                   annot=True, 
-                   cmap='coolwarm', 
-                   center=0,
-                   vmin=-1, 
-                   vmax=1,
-                   fmt='.2f')
-        plt.title('Metric Correlations')
-        plt.tight_layout()
-        heatmap_path = 'correlation_heatmap.png'
-        plt.savefig(heatmap_path)
-        plt.close()
-        
-        # Create bar chart
-        print("Creating bar chart...")
-        plt.figure(figsize=(12, 6))
-        numeric_df.mean().plot(kind='bar')
-        plt.title('Average Metric Scores')
-        plt.xticks(rotation=45)
-        plt.ylim(0, 1)
-        plt.tight_layout()
-        bar_chart_path = 'metric_scores.png'
-        plt.savefig(bar_chart_path)
-        plt.close()
-        
-        # Create radar chart
-        print("Creating radar chart...")
-        # Get the number of metrics
-        N = len(metrics_to_plot)
-        
-        # Create angles for each metric
-        angles = [n / float(N) * 2 * np.pi for n in range(N)]
-        angles += angles[:1]  # Close the loop
-        
-        # Create the plot
-        fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(projection='polar'))
-        
-        # Plot each model's metrics
-        for model in numeric_df.index:
-            values = numeric_df.loc[model].values
-            values = np.concatenate((values, [values[0]]))  # Close the loop
-            ax.plot(angles, values, linewidth=2, label=model)
-            ax.fill(angles, values, alpha=0.25)
-        
-        # Set the labels
-        plt.xticks(angles[:-1], metrics_to_plot)
-        ax.set_ylim(0, 1)
-        plt.legend(loc='upper right', bbox_to_anchor=(0.1, 0.1))
-        plt.title('Model Performance Comparison')
-        plt.tight_layout()
-        
-        radar_chart_path = 'radar_chart.png'
-        plt.savefig(radar_chart_path)
-        plt.close()
-        
-        print("All visualizations created successfully")
-        return heatmap_path, bar_chart_path, radar_chart_path
-        
-    except Exception as e:
-        print(f"Error in update_visualizations: {str(e)}")
-        print("Error details:", e.__class__.__name__)
-        import traceback
-        print("Traceback:", traceback.format_exc())
-        return None, None, None
-
-def score_response(response):
-    return {
-        "helpfulness": 0.8,
-        "correctness": 0.75,
-        "coherence": 0.85,
-        "tone_score": 0.7,
-        "bias_flag": "no",
-        "notes": "Auto-evaluated based on structure, clarity, and relevance."
+    results = {
+        "prompt": prompt,
+        "responses": {},
+        "evaluation": None,
+        "analysis": None,
+        "search_results": None,
+        "is_realtime": False
     }
-
-def explain_response(model, prompt, response):
-    try:
-        explanation = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Explain why this LLM response received its evaluation scores."},
-                {"role": "user", "content": f"Prompt: {prompt}\n\nResponse from {model}: {response}"}
-            ],
-            temperature=0.7
-        )
-        return explanation.choices[0].message.content
-    except Exception as e:
-        return f"Explanation error: {e}"
-
-def validate_metrics(metrics):
-    """Validate and normalize metrics to ensure they are within expected ranges."""
-    try:
-        validated = {}
-        for key, value in metrics.items():
-            if key in ['helpfulness', 'correctness', 'coherence', 'tone_score',
-                      'accuracy', 'relevance', 'completeness', 'clarity']:
-                try:
-                    # Convert to float and ensure it's between 0 and 1
-                    float_val = float(value)
-                    validated[key] = max(0.0, min(1.0, float_val))
-                except (ValueError, TypeError):
-                    print(f"Warning: Invalid value for {key}: {value}, using default 0.5")
-                    validated[key] = 0.5
-            else:
-                # For non-numeric fields, ensure they're strings
-                validated[key] = str(value) if value is not None else ''
-        return validated
-    except Exception as e:
-        print(f"Error in validate_metrics: {str(e)}")
-        return {
-            'helpfulness': 0.5, 'correctness': 0.5, 'coherence': 0.5,
-            'tone_score': 0.5, 'accuracy': 0.5, 'relevance': 0.5,
-            'completeness': 0.5, 'clarity': 0.5, 'reasoning': 'Error in validation',
-            'notes': f'Error: {str(e)}'
-        }
-
-def get_google_snippets(query: str, num_results: int = 3) -> str:
-    """Get relevant snippets from Google search."""
-    try:
-        url = "https://www.googleapis.com/customsearch/v1"
-        params = {
-            "key": os.getenv("GOOGLE_API_KEY"),
-            "cx": os.getenv("GOOGLE_CSE_ID"),
-            "q": query,
-            "num": num_results
-        }
-
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
-
-        snippets = []
-        for item in data.get("items", []):
-            title = item.get("title", "")
-            snippet = item.get("snippet", "")
-            link = item.get("link", "")
-            snippets.append(f"Title: {title}\nContent: {snippet}\nSource: {link}")
-
-        return "\n\n".join(snippets) if snippets else "No relevant information found."
-
-    except Exception as e:
-        print(f"Google Search Error: {e}")
-        return ""
-
-def is_realtime_prompt(prompt: str) -> bool:
-    """Check if the prompt requires real-time information."""
-    try:
-        system_msg = """You are a classifier that determines whether a user's question requires real-time or current information.
-        Consider these factors:
-        1. Does it ask about current events, news, or recent developments?
-        2. Does it require up-to-date data or statistics?
-        3. Would the answer be different if it was asked yesterday or tomorrow?
-        Answer with 'yes' or 'no' followed by a brief explanation."""
-        
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": f"Question: {prompt}\nAnswer with yes or no and explain:"}
-            ],
-            temperature=0
-        )
-
-        reply = response.choices[0].message.content.strip().lower()
-        print(f"Real-time detection result: {reply}")
-        return "yes" in reply
-
-    except Exception as e:
-        print(f"Real-time detection error: {e}")
-        return False
-
-def get_gpt4_response(prompt: str) -> str:
-    """Get response from GPT-4 with search results if needed."""
-    try:
-        # Check if real-time information is needed
-        needs_realtime = is_realtime_prompt(prompt)
-        search_results = ""
-        
-        if needs_realtime:
-            print("Prompt requires real-time information, fetching search results...")
-            search_results = get_google_snippets(prompt)
-            print("Search results obtained:", search_results[:200] + "..." if len(search_results) > 200 else search_results)
-        
-        evaluation_prompt = f"""
-        You are an AI evaluator. Evaluate the following prompt and provide a response with evaluation metrics.
-        
-        Prompt: {prompt}
-        
-        {f'Here are some relevant search results to help inform your response:\n{search_results}' if search_results else ''}
-        
-        Provide your response in JSON format with the following structure:
-        {{
-            "response": "your detailed response to the prompt, incorporating search results if provided",
-            "helpfulness": <score between 0-1>,
-            "correctness": <score between 0-1>,
-            "coherence": <score between 0-1>,
-            "tone_score": <score between 0-1>,
-            "accuracy": <score between 0-1>,
-            "relevance": <score between 0-1>,
-            "completeness": <score between 0-1>,
-            "clarity": <score between 0-1>,
-            "reasoning": "detailed explanation of your evaluation, including how search results were used if applicable",
-            "notes": "additional observations about the response and search results if used"
-        }}
-        
-        Ensure all scores are between 0 and 1, and provide detailed reasoning and notes.
-        If search results were provided, explain how they influenced your response and evaluation.
-        """
-        
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": evaluation_prompt}],
-            temperature=0.7
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"Error getting GPT-4 response: {str(e)}")
-        return None
-
-def get_claude_response(prompt: str) -> str:
-    """Get response from Claude with search results if needed."""
-    try:
-        # Check if real-time information is needed
-        needs_realtime = is_realtime_prompt(prompt)
-        search_results = ""
-        
-        if needs_realtime:
-            print("Prompt requires real-time information, fetching search results...")
-            search_results = get_google_snippets(prompt)
-            print("Search results obtained:", search_results[:200] + "..." if len(search_results) > 200 else search_results)
-        
-        evaluation_prompt = f"""
-        You are an AI evaluator. Evaluate the following prompt and provide a response with evaluation metrics.
-        
-        Prompt: {prompt}
-        
-        {f'Here are some relevant search results to help inform your response:\n{search_results}' if search_results else ''}
-        
-        Provide your response in JSON format with the following structure:
-        {{
-            "response": "your detailed response to the prompt, incorporating search results if provided",
-            "helpfulness": <score between 0-1>,
-            "correctness": <score between 0-1>,
-            "coherence": <score between 0-1>,
-            "tone_score": <score between 0-1>,
-            "accuracy": <score between 0-1>,
-            "relevance": <score between 0-1>,
-            "completeness": <score between 0-1>,
-            "clarity": <score between 0-1>,
-            "reasoning": "detailed explanation of your evaluation, including how search results were used if applicable",
-            "notes": "additional observations about the response and search results if used"
-        }}
-        
-        Ensure all scores are between 0 and 1, and provide detailed reasoning and notes.
-        If search results were provided, explain how they influenced your response and evaluation.
-        """
-        
-        response = anthropic.Anthropic().messages.create(
-            model="claude-3-opus-20240229",
-            max_tokens=1000,
-            temperature=0.7,
-            messages=[{"role": "user", "content": evaluation_prompt}]
-        )
-        return response.content[0].text
-    except Exception as e:
-        print(f"Error getting Claude response: {str(e)}")
-        return None
-
-def get_gemini_response(prompt: str) -> str:
-    """Get response from Gemini with search results if needed."""
-    try:
-        # Check if real-time information is needed
-        needs_realtime = is_realtime_prompt(prompt)
-        search_results = ""
-        
-        if needs_realtime:
-            print("Prompt requires real-time information, fetching search results...")
-            search_results = get_google_snippets(prompt)
-            print("Search results obtained:", search_results[:200] + "..." if len(search_results) > 200 else search_results)
-        
-        evaluation_prompt = f"""
-        You are an AI evaluator. Evaluate the following prompt and provide a response with evaluation metrics.
-        
-        Prompt: {prompt}
-        
-        {f'Here are some relevant search results to help inform your response:\n{search_results}' if search_results else ''}
-        
-        Provide your response in JSON format with the following structure:
-        {{
-            "response": "your detailed response to the prompt, incorporating search results if provided",
-            "helpfulness": <score between 0-1>,
-            "correctness": <score between 0-1>,
-            "coherence": <score between 0-1>,
-            "tone_score": <score between 0-1>,
-            "accuracy": <score between 0-1>,
-            "relevance": <score between 0-1>,
-            "completeness": <score between 0-1>,
-            "clarity": <score between 0-1>,
-            "reasoning": "detailed explanation of your evaluation, including how search results were used if applicable",
-            "notes": "additional observations about the response and search results if used"
-        }}
-        
-        Ensure all scores are between 0 and 1, and provide detailed reasoning and notes.
-        If search results were provided, explain how they influenced your response and evaluation.
-        """
-        
-        model = genai.GenerativeModel('gemini-pro')
-        response = model.generate_content(evaluation_prompt)
-        return response.text
-    except Exception as e:
-        print(f"Error getting Gemini response: {str(e)}")
-        return None
-
-def round_robin_evaluate_response(evaluator_model: str, prompt: str, target_model: str, response: str) -> dict:
-    """Evaluate a response using round-robin evaluation."""
-    try:
-        evaluation_prompt = f"""
-        You are evaluating a response from {target_model} to the following prompt:
-        
-        Prompt: {prompt}
-        
-        Response to evaluate:
-        {response}
-        
-        Provide your evaluation in JSON format with the following structure:
-        {{
-            "helpfulness": <score between 0-1>,
-            "correctness": <score between 0-1>,
-            "coherence": <score between 0-1>,
-            "tone_score": <score between 0-1>,
-            "accuracy": <score between 0-1>,
-            "relevance": <score between 0-1>,
-            "completeness": <score between 0-1>,
-            "clarity": <score between 0-1>,
-            "reasoning": "detailed explanation of your evaluation",
-            "notes": "additional observations about the response"
-        }}
-        
-        Ensure all scores are between 0 and 1, and provide detailed reasoning and notes.
-        """
-        
-        if evaluator_model == "GPT-4":
-            response = openai.ChatCompletion.create(
-                model="gpt-4",
-                messages=[{"role": "user", "content": evaluation_prompt}],
-                temperature=0.7
-            )
-            return json.loads(response.choices[0].message.content)
-        elif evaluator_model == "Claude 3":
-            response = anthropic.Anthropic().messages.create(
-                model="claude-3-opus-20240229",
-                max_tokens=1000,
-                temperature=0.7,
-                messages=[{"role": "user", "content": evaluation_prompt}]
-            )
-            return json.loads(response.content[0].text)
-        elif evaluator_model == "Gemini 1.5":
-            model = genai.GenerativeModel('gemini-pro')
-            response = model.generate_content(evaluation_prompt)
-            return json.loads(response.text)
-        else:
-            raise ValueError(f"Unknown evaluator model: {evaluator_model}")
-            
-    except Exception as e:
-        print(f"Error in round-robin evaluation: {str(e)}")
-        return {
-            "helpfulness": 0.5,
-            "correctness": 0.5,
-            "coherence": 0.5,
-            "tone_score": 0.5,
-            "accuracy": 0.5,
-            "relevance": 0.5,
-            "completeness": 0.5,
-            "clarity": 0.5,
-            "reasoning": f"Evaluation failed: {str(e)}",
-            "notes": "Error occurred during evaluation"
-        }
-
-def log_responses(responses: dict, prompt: str):
-    """Log responses and their evaluations to CSV."""
-    try:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"results/ai_prompt_eval_{timestamp}.csv"
-        
-        # Ensure results directory exists
-        os.makedirs("results", exist_ok=True)
-        
-        # Prepare data for CSV
-        rows = []
-        evaluator_cycle = {"GPT-4": "Claude 3", "Claude 3": "Gemini 1.5", "Gemini 1.5": "GPT-4"}
-        
-        for model, data in responses.items():
-            # Get round-robin evaluation
-            evaluator = evaluator_cycle[model]
-            evaluation = round_robin_evaluate_response(evaluator, prompt, model, data.get('response', ''))
-            
-            row = {
-                "timestamp": timestamp,
-                "prompt": prompt,
-                "model": model,
-                "evaluator": evaluator,
-                "response": data.get('response', ''),
-                "helpfulness": evaluation.get('helpfulness', 0.5),
-                "correctness": evaluation.get('correctness', 0.5),
-                "coherence": evaluation.get('coherence', 0.5),
-                "tone_score": evaluation.get('tone_score', 0.5),
-                "accuracy": evaluation.get('accuracy', 0.5),
-                "relevance": evaluation.get('relevance', 0.5),
-                "completeness": evaluation.get('completeness', 0.5),
-                "clarity": evaluation.get('clarity', 0.5),
-                "reasoning": evaluation.get('reasoning', ''),
-                "notes": evaluation.get('notes', '')
-            }
-            rows.append(row)
-        
-        # Write to CSV
-        fieldnames = list(rows[0].keys())
-        with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(rows)
-        
-        print(f"Responses logged to {filename}")
-        return filename
-        
-    except Exception as e:
-        print(f"Error logging responses: {str(e)}")
-        return None
-
-def get_all_responses(prompt):
-    """Get responses from all models with round-robin evaluation."""
-    responses = {}
     
-    # Get GPT-4 response
-    print("\nAttempting to get GPT-4 response...")
-    try:
-        gpt4_response = get_gpt4_response(prompt)
-        if gpt4_response:
-            print("Raw GPT-4 response:", gpt4_response[:200] + "..." if len(gpt4_response) > 200 else gpt4_response)
-            if isinstance(gpt4_response, str):
-                try:
-                    # Try to parse as JSON
-                    gpt4_data = json.loads(gpt4_response)
-                    responses['GPT-4'] = gpt4_data
-                except json.JSONDecodeError:
-                    # If not JSON, evaluate the response
-                    responses['GPT-4'] = evaluate_with_gpt4(prompt, gpt4_response)
-            else:
-                responses['GPT-4'] = gpt4_response
-    except Exception as e:
-        print(f"Error getting GPT-4 response: {str(e)}")
-    
-    # Get Claude response
-    print("\nAttempting to get Claude response...")
-    try:
-        claude_response = get_claude_response(prompt)
-        if claude_response:
-            print("Raw Claude response:", claude_response[:200] + "..." if len(claude_response) > 200 else claude_response)
-            if isinstance(claude_response, str):
-                try:
-                    # Try to parse as JSON
-                    claude_data = json.loads(claude_response)
-                    responses['Claude 3'] = claude_data
-                except json.JSONDecodeError:
-                    # If not JSON, evaluate the response
-                    responses['Claude 3'] = evaluate_with_claude(prompt, claude_response)
-            else:
-                responses['Claude 3'] = claude_response
-    except Exception as e:
-        print(f"Error getting Claude response: {str(e)}")
-    
-    # Get Gemini response
-    print("\nAttempting to get Gemini response...")
-    try:
-        gemini_response = get_gemini_response(prompt)
-        if gemini_response:
-            print("Raw Gemini response:", gemini_response[:200] + "..." if len(gemini_response) > 200 else gemini_response)
-            if isinstance(gemini_response, str):
-                try:
-                    # Try to parse as JSON
-                    gemini_data = json.loads(gemini_response)
-                    responses['Gemini 1.5'] = gemini_data
-                except json.JSONDecodeError:
-                    # If not JSON, evaluate the response
-                    responses['Gemini 1.5'] = evaluate_with_gemini(prompt, gemini_response)
-            else:
-                responses['Gemini 1.5'] = gemini_response
-    except Exception as e:
-        print(f"Error getting Gemini response: {str(e)}")
-    
-    print(f"\nTotal responses collected: {len(responses)}")
-    
-    # Log responses with round-robin evaluation
-    log_file = log_responses(responses, prompt)
-    if log_file:
-        print(f"Responses logged to {log_file}")
-    
-    return responses
-
-def evaluate_with_gpt4(prompt, response):
-    """Evaluate response using GPT-4."""
-    try:
-        evaluation_prompt = f"""
-        Evaluate the following response to the prompt: "{prompt}"
-        
-        Response: {response}
-        
-        Provide a detailed evaluation in JSON format with the following metrics:
-        - helpfulness (0-1)
-        - correctness (0-1)
-        - coherence (0-1)
-        - tone_score (0-1)
-        - accuracy (0-1)
-        - relevance (0-1)
-        - completeness (0-1)
-        - clarity (0-1)
-        - reasoning (detailed explanation of the evaluation)
-        - notes (additional observations)
-        
-        Format the response as a JSON object.
-        """
-        evaluation = get_gpt4_response(evaluation_prompt)
-        if isinstance(evaluation, str):
-            try:
-                return json.loads(evaluation)
-            except json.JSONDecodeError:
-                return {
-                    "response": response,
-                    "helpfulness": 0.8,
-                    "correctness": 0.8,
-                    "coherence": 0.8,
-                    "tone_score": 0.8,
-                    "accuracy": 0.8,
-                    "relevance": 0.8,
-                    "completeness": 0.8,
-                    "clarity": 0.8,
-                    "reasoning": "Response evaluated based on content quality and relevance",
-                    "notes": "Response provides comprehensive information about the topic"
-                }
-        return evaluation
-    except Exception as e:
-        print(f"Error in GPT-4 evaluation: {str(e)}")
-        return None
-
-def evaluate_with_claude(prompt, response):
-    """Evaluate response using Claude."""
-    try:
-        evaluation_prompt = f"""
-        Evaluate the following response to the prompt: "{prompt}"
-        
-        Response: {response}
-        
-        Provide a detailed evaluation in JSON format with the following metrics:
-        - helpfulness (0-1)
-        - correctness (0-1)
-        - coherence (0-1)
-        - tone_score (0-1)
-        - accuracy (0-1)
-        - relevance (0-1)
-        - completeness (0-1)
-        - clarity (0-1)
-        - reasoning (detailed explanation of the evaluation)
-        - notes (additional observations)
-        
-        Format the response as a JSON object.
-        """
-        evaluation = get_claude_response(evaluation_prompt)
-        if isinstance(evaluation, str):
-            try:
-                return json.loads(evaluation)
-            except json.JSONDecodeError:
-                return {
-                    "response": response,
-                    "helpfulness": 0.8,
-                    "correctness": 0.8,
-                    "coherence": 0.8,
-                    "tone_score": 0.8,
-                    "accuracy": 0.8,
-                    "relevance": 0.8,
-                    "completeness": 0.8,
-                    "clarity": 0.8,
-                    "reasoning": "Response evaluated based on content quality and relevance",
-                    "notes": "Response provides comprehensive information about the topic"
-                }
-        return evaluation
-    except Exception as e:
-        print(f"Error in Claude evaluation: {str(e)}")
-        return None
-
-def evaluate_with_gemini(prompt, response):
-    """Evaluate response using Gemini."""
-    try:
-        evaluation_prompt = f"""
-        Evaluate the following response to the prompt: "{prompt}"
-        
-        Response: {response}
-        
-        Provide a detailed evaluation in JSON format with the following metrics:
-        - helpfulness (0-1)
-        - correctness (0-1)
-        - coherence (0-1)
-        - tone_score (0-1)
-        - accuracy (0-1)
-        - relevance (0-1)
-        - completeness (0-1)
-        - clarity (0-1)
-        - reasoning (detailed explanation of the evaluation)
-        - notes (additional observations)
-        
-        Format the response as a JSON object.
-        """
-        evaluation = get_gemini_response(evaluation_prompt)
-        if isinstance(evaluation, str):
-            try:
-                return json.loads(evaluation)
-            except json.JSONDecodeError:
-                return {
-                    "response": response,
-                    "helpfulness": 0.8,
-                    "correctness": 0.8,
-                    "coherence": 0.8,
-                    "tone_score": 0.8,
-                    "accuracy": 0.8,
-                    "relevance": 0.8,
-                    "completeness": 0.8,
-                    "clarity": 0.8,
-                    "reasoning": "Response evaluated based on content quality and relevance",
-                    "notes": "Response provides comprehensive information about the topic"
-                }
-        return evaluation
-    except Exception as e:
-        print(f"Error in Gemini evaluation: {str(e)}")
-        return None
-
-def update_all_components(df, correlation_threshold=0.5, metric_weight=1.0):
-    """Update all UI components with the latest data."""
-    try:
-        if df is None or df.empty:
-            return tuple([None] * 16)  # Changed to 16 outputs
-        
-        print("\nUpdating all components...")
-        print("Input DataFrame shape:", df.shape)
-        print("Input DataFrame columns:", df.columns.tolist())
-        
-        # Initialize outputs list
-        outputs = []
-        
-        # Update model outputs
-        for model in df.index:
-            # Get model data
-            model_data = df.loc[model].to_dict()
-            
-            # Format response
-            response = model_data.get('response', 'No response available')
-            outputs.append(response)
-            
-            # Format metrics (without reasoning and notes)
-            metrics_text = format_metrics_text(model_data)
-            outputs.append(metrics_text)
-            
-            # Add reasoning and notes separately
-            reasoning, notes = model_data.get('reasoning', 'No reasoning available'), model_data.get('notes', 'No notes available')
-            outputs.extend([reasoning, notes])
-        
-        # Update visualizations
+    # Step 1: Check if real-time detection is needed
+    if enable_realtime_detection:
         try:
-            viz_outputs = update_visualizations(df, correlation_threshold, metric_weight)
-            if viz_outputs:
-                outputs.extend(viz_outputs)
+            results["is_realtime"] = is_realtime_prompt(prompt)
+            if results["is_realtime"]:
+                # Get Google search results
+                search_results = get_google_snippets(prompt)
+                results["search_results"] = search_results
+                # Enhance prompt with search results
+                enhanced_prompt = f"{prompt}\n\nRecent information: {search_results}"
             else:
-                outputs.extend([None] * 3)  # Add None for each visualization
+                enhanced_prompt = prompt
         except Exception as e:
-            print(f"Error updating visualizations: {str(e)}")
-            outputs.extend([None] * 3)
-        
-        # Add DataFrame state for download
-        outputs.append(df)
-        
-        print(f"Generated {len(outputs)} outputs")
-        return tuple(outputs)
-        
-    except Exception as e:
-        print(f"Error in update_all_components: {str(e)}")
-        print("Error details:", e.__class__.__name__)
-        print("Traceback:", traceback.format_exc())
-        return tuple([None] * 16)  # Changed to 16 outputs
-
-def process_prompt(prompt, correlation_threshold=0.5, metric_weight=1.0):
-    """Process the prompt and return evaluation results."""
+            print(f"Real-time detection error: {e}")
+            enhanced_prompt = prompt
+    else:
+        enhanced_prompt = prompt
+    
+    # Step 2: Generate responses from all models
     try:
-        print(f"\nProcessing prompt: {prompt}")
-        print(f"Using correlation threshold: {correlation_threshold}")
-        print(f"Using metric weight: {metric_weight}")
-        
-        # Get responses from all models
-        responses = get_all_responses(prompt)
-        
-        # Create DataFrame from responses
-        df = pd.DataFrame.from_dict(responses, orient='index')
-        
-        # Ensure all required columns exist
-        required_columns = ['response', 'helpfulness', 'correctness', 'coherence', 
-                          'tone_score', 'accuracy', 'relevance', 'completeness', 
-                          'clarity', 'reasoning', 'notes']
-        
-        for col in required_columns:
-            if col not in df.columns:
-                print(f"Warning: {col} not found in DataFrame, adding with default value 0.5")
-                df[col] = 0.5
-        
-        # Add prompt column
-        df['prompt'] = prompt
-        
-        # Convert numeric columns to float
-        numeric_columns = ['helpfulness', 'correctness', 'coherence', 'tone_score',
-                         'accuracy', 'relevance', 'completeness', 'clarity']
-        for col in numeric_columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.5)
-        
-        print("DataFrame created successfully")
-        print("DataFrame columns:", df.columns.tolist())
-        print("DataFrame shape:", df.shape)
-        
-        # Update visualizations and get outputs
+        responses = generate_all_responses(enhanced_prompt)
+        results["responses"] = responses
+    except Exception as e:
+        return f"Error generating responses: {e}", None, None, None, None, None
+    
+    # Step 3: Perform evaluation if requested
+    if enable_evaluation and responses:
         try:
-            outputs = update_all_components(df, correlation_threshold, metric_weight)
-            if outputs:
-                return outputs
-        except Exception as e:
-            print(f"Error updating visualizations: {str(e)}")
-            print("Error details:", e.__class__.__name__)
-            print("Traceback:", traceback.format_exc())
-            # Return 16 None values if there's an error
-            return tuple([None] * 16)
+            evaluation_results = comprehensive_round_robin_evaluation(responses, prompt)
+            results["evaluation"] = evaluation_results
             
-    except Exception as e:
-        print(f"Error in process_prompt: {str(e)}")
-        print("Error details:", e.__class__.__name__)
-        print("Traceback:", traceback.format_exc())
-        # Return 16 None values if there's an error
-        return tuple([None] * 16)
+            # Save results
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            csv_file = save_comprehensive_results(evaluation_results, prompt, timestamp)
+            
+        except Exception as e:
+            print(f"Evaluation error: {e}")
+    
+    # Step 4: Generate analysis if requested
+    if enable_analysis and results["evaluation"]:
+        try:
+            # Create a temporary DataFrame for analysis
+            analysis_data = []
+            for model, data in results["evaluation"].items():
+                for evaluator, eval_data in data.get('evaluations', {}).items():
+                    row = {
+                        'target_model': model,
+                        'evaluator': evaluator,
+                        'helpfulness': eval_data.get('helpfulness', 0.5),
+                        'correctness': eval_data.get('correctness', 0.5),
+                        'coherence': eval_data.get('coherence', 0.5),
+                        'clarity': eval_data.get('clarity', 0.5),
+                        'response': data.get('response', '')
+                    }
+                    analysis_data.append(row)
+            
+            if analysis_data:
+                df = pd.DataFrame(analysis_data)
+                results["analysis"] = df
+                
+        except Exception as e:
+            print(f"Analysis error: {e}")
+    
+    return format_results(results)
 
-def download_csv(df):
-    """Create and return a downloadable CSV file."""
-    if df is None or df.empty:
-        return None
+def format_results(results):
+    """Format results for Gradio display."""
+    prompt = results["prompt"]
+    responses = results["responses"]
+    evaluation = results["evaluation"]
+    analysis = results["analysis"]
+    search_results = results["search_results"]
+    is_realtime = results["is_realtime"]
+    
+    # Format responses
+    responses_text = ""
+    if responses:
+        responses_text = "MODEL RESPONSES:\n" + "="*50 + "\n"
+        for model, response in responses.items():
+            responses_text += f"\n{model}:\n{'-'*20}\n{response}\n"
+    else:
+        responses_text = "No responses generated. Check API keys."
+    
+    # Format evaluation results
+    evaluation_text = ""
+    if evaluation:
+        evaluation_text = "EVALUATION RESULTS:\n" + "="*50 + "\n"
+        for model, data in evaluation.items():
+            avg_scores = data.get('average_scores', {})
+            evaluation_text += f"\n{model} Average Scores:\n"
+            for metric, score in avg_scores.items():
+                evaluation_text += f"  {metric}: {score}\n"
+            evaluation_text += f"  Evaluated by: {list(data.get('evaluations', {}).keys())}\n"
+    else:
+        evaluation_text = "No evaluation performed."
+    
+    # Format search results
+    search_text = ""
+    if search_results and is_realtime:
+        search_text = "REAL-TIME SEARCH RESULTS:\n" + "="*50 + "\n"
+        search_text += search_results
+    elif is_realtime:
+        search_text = "Real-time query detected but search results unavailable."
+    else:
+        search_text = "Not a real-time query."
+    
+    # Create visualizations
+    charts = []
+    if analysis is not None and not analysis.empty:
+        charts = create_visualizations(analysis)
+    
+    return responses_text, evaluation_text, search_text, charts
+
+def create_visualizations(df):
+    """Create Plotly visualizations for the analysis."""
+    charts = []
+    
     try:
-        # Create results directory if it doesn't exist
-        results_dir = os.path.join(os.getcwd(), "results")
-        os.makedirs(results_dir, exist_ok=True)
+        # 1. Model Performance Comparison
+        if 'target_model' in df.columns:
+            metrics = ['helpfulness', 'correctness', 'coherence', 'clarity']
+            
+            for metric in metrics:
+                if metric in df.columns:
+                    fig = px.box(df, x='target_model', y=metric, 
+                               title=f'{metric.title()} Scores by Model',
+                               color='target_model')
+                    fig.update_layout(showlegend=False)
+                    charts.append(fig)
         
-        # Generate timestamp and filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = os.path.join(results_dir, f"ai_prompt_eval_{timestamp}.csv")
+        # 2. Evaluator Bias Analysis
+        if 'evaluator' in df.columns:
+            metrics = ['helpfulness', 'correctness', 'coherence', 'clarity']
+            
+            for metric in metrics:
+                if metric in df.columns:
+                    fig = px.box(df, x='evaluator', y=metric,
+                               title=f'{metric.title()} Scores by Evaluator',
+                               color='evaluator')
+                    fig.update_layout(showlegend=False)
+                    charts.append(fig)
         
-        # Save DataFrame to CSV
-        df.to_csv(filename, index=True)
-        print(f"CSV file saved to: {filename}")
-        
-        # Return the file path for download
-        return filename
+        # 3. Heatmap of Cross-Evaluations
+        if 'target_model' in df.columns and 'evaluator' in df.columns and 'helpfulness' in df.columns:
+            pivot_data = df.pivot_table(
+                values='helpfulness',
+                index='target_model',
+                columns='evaluator',
+                aggfunc='mean'
+            ).fillna(0)
+            
+            fig = px.imshow(pivot_data.values,
+                           x=pivot_data.columns,
+                           y=pivot_data.index,
+                           title='Cross-Evaluation Heatmap (Helpfulness)',
+                           color_continuous_scale='RdYlBu_r',
+                           aspect='auto')
+            fig.update_layout(xaxis_title='Evaluator', yaxis_title='Target Model')
+            charts.append(fig)
+    
     except Exception as e:
-        print(f"Error creating CSV file: {str(e)}")
-        return None
+        print(f"Visualization error: {e}")
+    
+    return charts
 
-def create_ui():
+def export_results(responses_text, evaluation_text, search_text):
+    """Export results to a text file."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"results/export_{timestamp}.txt"
+    
+    os.makedirs("results", exist_ok=True)
+    
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write("LLM COMPARISON RESULTS\n")
+        f.write("="*50 + "\n")
+        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        
+        f.write(responses_text + "\n\n")
+        f.write(evaluation_text + "\n\n")
+        f.write(search_text + "\n\n")
+    
+    return f"Results exported to {filename}"
+
+# Create Gradio interface
+def create_interface():
     """Create the Gradio interface."""
-    with gr.Blocks(title="LLM-Compare-Hub", theme=gr.themes.Soft()) as demo:
-        gr.Markdown("""
-        # LLM-Compare-Hub
-        
-        ## How to Use This Tool
-        
-        1. **Enter Your Prompt**: Type your question or prompt in the text box below
-        2. **Evaluate**: Click the "Evaluate Prompt" button to process your prompt
-        3. **View Results**: 
-           - See responses from GPT-4, Claude 3, and Gemini 1.5
-           - Check detailed metrics for each response
-           - Review reasoning and notes for each evaluation
-           - Note: For real-time queries, responses will include relevant search results
-        4. **Analyze Visualizations**:
-           - Use the Correlation Threshold to filter metric relationships
-           - Adjust Metric Weight to scale all metrics
-           - View correlation heatmap, average scores, and model comparison
-        5. **Download Results**: Click the download button to save your evaluation as CSV
-        
-        The tool evaluates responses on 8 key metrics: Helpfulness, Correctness, Coherence, Tone Score, Accuracy, Relevance, Completeness, and Clarity.
-        For real-time queries, the tool automatically fetches relevant information to enhance responses.
-        """)
-        
-        with gr.Row():
-            prompt_input = gr.Textbox(
-                label="Enter your prompt",
-                placeholder="Type your prompt here...",
-                lines=3
-            )
+    
+    # Check API keys
+    api_status = check_api_keys()
+    api_status_text = "API KEY STATUS:\n" + "="*30 + "\n"
+    for service, status in api_status.items():
+        api_status_text += f"{service}: {status}\n"
+    
+    with gr.Blocks(title="LLM Comparison Hub", theme=gr.themes.Soft()) as interface:
+        gr.Markdown("# LLM Comparison Hub")
+        gr.Markdown("Compare responses from GPT-4, Claude 3, and Gemini 1.5 with comprehensive evaluation and analysis.")
         
         with gr.Row():
             with gr.Column(scale=2):
-                evaluate_btn = gr.Button(
-                    "Evaluate Prompt",
-                    variant="primary",
-                    size="lg"
+                # Input section
+                gr.Markdown("## Input")
+                prompt_input = gr.Textbox(
+                    label="Enter your prompt",
+                    placeholder="Type your question or prompt here...",
+                    lines=4
                 )
-            with gr.Column(scale=1):
-                download_btn = gr.Button(
-                    "Download Results",
-                    variant="secondary",
-                    size="lg"
-                )
-                download_file = gr.File(
-                    label="Download CSV",
-                    visible=True,
-                    file_count="single",
-                    elem_classes=["download-file"]
-                )
-        
-        with gr.Row():
-            correlation_threshold = gr.Slider(
-                minimum=0.0, maximum=1.0, value=0.5, step=0.1,
-                label="Correlation Threshold"
-            )
-            metric_weight = gr.Slider(
-                minimum=0.1, maximum=2.0, value=1.0, step=0.1,
-                label="Metric Weight"
-            )
-        
-        # Create output components for each model
-        model_outputs = []
-        for model in ["GPT-4", "Claude 3", "Gemini 1.5"]:
-            with gr.Group():
-                gr.Markdown(f"### {model} Response")
+                
                 with gr.Row():
-                    with gr.Column(scale=2):
-                        response_output = gr.Textbox(
-                            label="Response",
-                            lines=5,
-                            elem_classes=["response-box"]
+                    realtime_checkbox = gr.Checkbox(label="Enable real-time detection", value=True)
+                    evaluation_checkbox = gr.Checkbox(label="Enable evaluation", value=True)
+                    analysis_checkbox = gr.Checkbox(label="Enable analysis", value=True)
+                
+                process_btn = gr.Button("Process Prompt", variant="primary")
+                
+                # API status
+                gr.Markdown("## API Status")
+                api_status_display = gr.Textbox(
+                    value=api_status_text,
+                    label="API Keys",
+                    lines=len(api_status) + 3,
+                    interactive=False
+                )
+            
+            with gr.Column(scale=3):
+                # Output section
+                gr.Markdown("## Results")
+                
+                with gr.Tabs():
+                    with gr.TabItem("Responses"):
+                        responses_output = gr.Textbox(
+                            label="Model Responses",
+                            lines=15,
+                            interactive=False
                         )
-                    with gr.Column(scale=1):
-                        metrics_output = gr.Markdown(
+                    
+                    with gr.TabItem("Evaluation"):
+                        evaluation_output = gr.Textbox(
                             label="Evaluation Results",
-                            elem_classes=["metrics-box"]
+                            lines=15,
+                            interactive=False
                         )
-                with gr.Row():
-                    with gr.Column():
-                        reasoning_output = gr.Textbox(
-                            label="Reasoning",
-                            lines=3,
-                            visible=True,
-                            elem_classes=["reasoning-box"]
+                    
+                    with gr.TabItem("Search Results"):
+                        search_output = gr.Textbox(
+                            label="Real-time Search Results",
+                            lines=10,
+                            interactive=False
                         )
-                    with gr.Column():
-                        notes_output = gr.Textbox(
-                            label="Notes",
-                            lines=2,
-                            visible=True,
-                            elem_classes=["notes-box"]
-                        )
-                model_outputs.extend([response_output, metrics_output, reasoning_output, notes_output])
-        
-        # Add visualization components
-        with gr.Row():
-            with gr.Column(scale=1):
-                correlation_plot = gr.Image(label="Metric Correlations")
-            with gr.Column(scale=1):
-                bar_plot = gr.Image(label="Average Metric Scores")
-            with gr.Column(scale=1):
-                radar_plot = gr.Image(label="Model Performance Comparison")
-        
-        # Store the last processed DataFrame
-        last_df = gr.State(None)
+                    
+                    with gr.TabItem("Visualizations"):
+                        charts_output = gr.Plot(label="Analysis Charts")
+                
+                # Export button
+                export_btn = gr.Button("Export Results")
+                export_output = gr.Textbox(label="Export Status", interactive=False)
         
         # Event handlers
-        evaluate_btn.click(
+        process_btn.click(
             fn=process_prompt,
-            inputs=[prompt_input, correlation_threshold, metric_weight],
-            outputs=model_outputs + [correlation_plot, bar_plot, radar_plot, last_df]
+            inputs=[prompt_input, realtime_checkbox, evaluation_checkbox, analysis_checkbox],
+            outputs=[responses_output, evaluation_output, search_output, charts_output]
         )
         
-        # Connect the download button
-        download_btn.click(
-            fn=download_csv,
-            inputs=[last_df],
-            outputs=[download_file],
-            api_name="download_csv"
+        export_btn.click(
+            fn=export_results,
+            inputs=[responses_output, evaluation_output, search_output],
+            outputs=[export_output]
         )
-        
-        # Connect the control sliders
-        correlation_threshold.change(
-            fn=lambda x, y, z: process_prompt(z, x, y),
-            inputs=[correlation_threshold, metric_weight, prompt_input],
-            outputs=model_outputs + [correlation_plot, bar_plot, radar_plot, last_df]
-        )
-        
-        metric_weight.change(
-            fn=lambda x, y, z: process_prompt(z, x, y),
-            inputs=[correlation_threshold, metric_weight, prompt_input],
-            outputs=model_outputs + [correlation_plot, bar_plot, radar_plot, last_df]
-        )
-        
-        # Add custom CSS
-        gr.HTML("""
-        <style>
-        .download-file {
-            border: 2px dashed #ccc;
-            padding: 10px;
-            border-radius: 5px;
-            background-color: #f8f9fa;
-        }
-        .response-box {
-            background-color: #f8f9fa;
-            border-radius: 5px;
-        }
-        .metrics-box {
-            background-color: #e9ecef;
-            padding: 10px;
-            border-radius: 5px;
-        }
-        .reasoning-box, .notes-box {
-            background-color: #f8f9fa;
-            border-radius: 5px;
-        }
-        button {
-            border-radius: 5px !important;
-        }
-        </style>
-        """)
     
-    return demo
+    return interface
 
 if __name__ == "__main__":
-    # Create results directory
-    results_dir = os.path.join(os.getcwd(), 'results')
-    os.makedirs(results_dir, exist_ok=True)
-    print(f"Results directory created at: {results_dir}")
-    
-    # Create and launch the UI
-    demo = create_ui()
-    demo.launch()
+    # Create and launch the interface
+    interface = create_interface()
+    interface.launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        share=False,
+        debug=True
+    ) 

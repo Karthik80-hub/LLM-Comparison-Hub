@@ -1,145 +1,183 @@
-# LLM-Compare-Hub
+# LLM Comparison Hub
 
-A comprehensive tool for evaluating and comparing responses from multiple AI language models (GPT-4, Claude 3, and Gemini 1.5) with real-time search integration and advanced analytics.
+A comprehensive tool for comparing responses from multiple Large Language Models (GPT-4, Claude 3, Gemini 1.5) with built-in evaluation, analysis, and visualization capabilities.
 
 ## Features
 
-### 1. Multi-Model Evaluation
-- **Supported Models**:
-  - GPT-4 (OpenAI)
-  - Claude 3 Opus (Anthropic)
-  - Gemini 1.5 Pro (Google)
-- **Round-Robin Evaluation**: Each model's response is evaluated by another model in a cycle
-- **Comprehensive Metrics**:
-  - Helpfulness
-  - Correctness
-  - Coherence
-  - Tone Score
-  - Accuracy
-  - Relevance
-  - Completeness
-  - Clarity
+- **Multi-Model Response Generation**: Generate responses from GPT-4, Claude 3, and Gemini 1.5
+- **Comprehensive Evaluation**: Round-robin evaluation where each model evaluates all others
+- **Real-time Query Detection**: Automatically detect and enhance real-time queries with Google search
+- **Data Analysis & Visualization**: Generate charts and analysis reports
+- **Modular Architecture**: Clean, production-ready code with separated concerns
+- **Gradio Web Interface**: User-friendly web UI for all features
 
-### 2. Real-Time Information Integration
-- **Automatic Detection**: Identifies prompts requiring real-time information
-- **Google Search Integration**: Fetches relevant search results for real-time queries
-- **Enhanced Responses**: Models incorporate search results into their responses
-- **Transparent Reasoning**: Models explain how search results influenced their responses
+## Project Structure
 
-### 3. Advanced Analytics & Visualization
-- **Interactive Dashboard**: Gradio-based user interface
-- **Visualization Tools**:
-  - Correlation Heatmap: Shows relationships between metrics
-  - Bar Chart: Compares average scores across models
-  - Radar Chart: Displays metric distribution for each model
-- **Customizable Controls**:
-  - Correlation Threshold: Filter metric relationships
-  - Metric Weight: Adjust importance of metrics
+### Core Modules
 
-### 4. Comprehensive Logging
-- **Detailed CSV Export**:
-  - Timestamp of evaluation
-  - Original prompt
-  - Model responses
-  - Evaluation metrics
-  - Reasoning and notes
-  - Round-robin evaluation results
-- **Automatic File Management**:
-  - Results stored in `results/` directory
-  - Files named `ai_prompt_eval_YYYYMMDD_HHMMSS.csv`
-  - Easy to track and compare evaluations
+- **`gradio_full_llm_eval.py`** - Main Gradio web interface (UI orchestration only)
+- **`response_generator.py`** - Handles all LLM response generation
+- **`round_robin_evaluator.py`** - Handles comprehensive model evaluation
+- **`realtime_detector.py`** - Detects real-time queries
+- **`search_fallback.py`** - Integrates Google search for real-time information
+- **`llm_prompt_eval_analysis.py`** - Data analysis and visualization
 
-## Setup
+### Configuration Files
 
-1. **Clone the Repository**:
+- **`requirements.txt`** - Python dependencies
+- **`.env`** - API keys and configuration (create this file)
+- **`README.md`** - This documentation
+
+## Installation
+
+1. **Clone the repository**:
    ```bash
-   git clone [repository-url]
+   git clone <repository-url>
    cd LLM-Compare-Hub
    ```
 
-2. **Install Dependencies**:
+2. **Install dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Environment Variables**:
-   Create a `.env` file with the following API keys:
+3. **Set up API keys**:
+   Create a `.env` file in the project root with your API keys:
    ```
-   OPENAI_API_KEY=your_openai_key
-   CLAUDE_API_KEY=your_claude_key
-   GEMINI_API_KEY=your_gemini_key
-   GOOGLE_API_KEY=your_google_key
-   GOOGLE_CSE_ID=your_custom_search_engine_id
+   OPENAI_API_KEY=your_openai_key_here
+   CLAUDE_API_KEY=your_claude_key_here
+   GEMINI_API_KEY=your_gemini_key_here
+   GOOGLE_API_KEY=your_google_key_here
+   GOOGLE_CSE_ID=your_google_cse_id_here
    ```
 
 ## Usage
 
-1. **Start the Application**:
-   ```bash
-   python gradio_full_llm_eval.py
-   ```
+### Web Interface (Recommended)
 
-2. **Using the Dashboard**:
-   - Enter your prompt in the text box
-   - Click "Evaluate Prompt" to process
-   - View responses and metrics for each model
-   - Adjust visualization controls as needed
-   - Download results as CSV
+Launch the Gradio web interface:
+```bash
+python gradio_full_llm_eval.py
+```
 
-3. **Understanding the Results**:
-   - **Response Display**: Shows each model's response with metrics
-   - **Metrics Panel**: Displays detailed evaluation scores
-   - **Visualizations**: Interactive charts for metric analysis
-   - **CSV Export**: Complete evaluation data for further analysis
+The interface provides:
+- **Input Section**: Enter prompts and configure options
+- **Results Tabs**: View responses, evaluations, search results, and visualizations
+- **API Status**: Check which API keys are available
+- **Export**: Save results to files
 
-## Features in Detail
+### Standalone Tools
 
-### Real-Time Query Handling
-- The system automatically detects if a prompt requires current information
-- For real-time queries:
-  1. Fetches relevant search results
-  2. Incorporates results into model prompts
-  3. Models explain how they used the information
-  4. Evaluations consider the use of real-time data
+Each module can be used independently:
 
-### Round-Robin Evaluation
-- GPT-4 evaluates Claude 3
-- Claude 3 evaluates Gemini 1.5
-- Gemini 1.5 evaluates GPT-4
-- Each evaluation includes:
-  - Detailed reasoning
-  - Metric scores
-  - Additional observations
+#### Response Generator
+```bash
+python response_generator.py
+```
+- Interactive mode for single prompts
+- Batch mode for multiple prompts from file
 
-### Data Management
-- **CSV Structure**:
-  - Timestamp
-  - Prompt
-  - Model
-  - Evaluator
-  - Response
-  - All metrics
-  - Reasoning
-  - Notes
-- **File Organization**:
-  - Results stored in `results/` directory
-  - Files named `ai_prompt_eval_YYYYMMDD_HHMMSS.csv`
-  - Easy to track and compare evaluations
+#### Round-Robin Evaluator
+```bash
+python round_robin_evaluator.py
+```
+- Test the evaluation system
+- View evaluation metrics
+
+#### Analysis Tool
+```bash
+python llm_prompt_eval_analysis.py
+```
+- Analyze latest CSV results
+- Generate visualizations
+- Create comprehensive reports
+
+#### Response Logger
+```bash
+python llm_response_logger.py
+```
+- Quick testing of all models
+- Batch testing from files
+
+## API Requirements
+
+### Required APIs
+- **OpenAI API**: For GPT-4 responses
+- **Anthropic API**: For Claude 3 responses
+- **Google Generative AI**: For Gemini 1.5 responses
+
+### Optional APIs
+- **Google Custom Search**: For real-time query enhancement
+
+## Evaluation Metrics
+
+The system evaluates responses on multiple criteria:
+- **Helpfulness**: How useful and informative is the response?
+- **Correctness**: How accurate and factually correct is the response?
+- **Coherence**: How well-structured and logical is the response?
+- **Tone**: How appropriate and professional is the tone?
+- **Accuracy**: How precise and detailed is the information?
+- **Relevance**: How well does the response address the prompt?
+- **Completeness**: How comprehensive is the response?
+- **Clarity**: How clear and easy to understand is the response?
+
+## Output Files
+
+### Results Directory
+- **CSV Files**: Comprehensive evaluation results with timestamps
+- **Analysis Reports**: Detailed analysis and insights
+- **Visualizations**: Charts and graphs in PNG format
+- **Export Files**: Text exports of complete results
+
+### File Naming Convention
+- `comprehensive_eval_YYYYMMDD_HHMMSS.csv` - Evaluation results
+- `evaluation_report_YYYYMMDD_HHMMSS.txt` - Analysis reports
+- `export_YYYYMMDD_HHMMSS.txt` - Exported results
+
+## Modular Architecture
+
+### Design Principles
+- **Separation of Concerns**: Each file has a specific responsibility
+- **Clean Code**: No emojis or decorative symbols
+- **Production Ready**: Error handling and logging throughout
+- **Reusable Components**: Modules can be used independently
+- **Configurable**: Easy to modify and extend
+
+### Module Responsibilities
+
+| Module | Responsibility |
+|--------|---------------|
+| `gradio_full_llm_eval.py` | UI orchestration and display |
+| `response_generator.py` | LLM API calls and response collection |
+| `round_robin_evaluator.py` | Model evaluation and scoring |
+| `realtime_detector.py` | Real-time query detection |
+| `search_fallback.py` | Google search integration |
+| `llm_prompt_eval_analysis.py` | Data analysis and visualization |
 
 ## Error Handling
-- Graceful handling of API failures
-- Fallback mechanisms for evaluation
-- Detailed error logging
-- User-friendly error messages
+
+The system includes comprehensive error handling:
+- **API Failures**: Graceful handling of API errors
+- **Missing Keys**: Clear indication of missing API keys
+- **Network Issues**: Retry logic and fallback options
+- **Data Validation**: Input validation and sanitization
 
 ## Contributing
-Feel free to submit issues and enhancement requests!
+
+1. Follow the modular architecture
+2. Maintain clean, production-ready code
+3. Add proper error handling
+4. Update documentation for new features
+5. Test all modules independently
 
 ## License
-[Your chosen license]
 
-## Acknowledgments
-- OpenAI for GPT-4
-- Anthropic for Claude 3
-- Google for Gemini 1.5
-- Gradio for the UI framework 
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Support
+
+For issues and questions:
+1. Check the API key configuration
+2. Verify all dependencies are installed
+3. Review the error messages in the console
+4. Check the results directory for output files 

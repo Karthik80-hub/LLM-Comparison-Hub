@@ -1,336 +1,254 @@
+# gradio_full_llm_eval.py – Final Updated Version with ATS Scoring and Visualized UI
 import gradio as gr
 import os
 import pandas as pd
-import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime
+import plotly.graph_objects as go
+import plotly.io as pio
+import zipfile
 import json
+from datetime import datetime
+from dotenv import load_dotenv
 
-# Import modules from existing files
-from response_generator import generate_all_responses
-from round_robin_evaluator import comprehensive_round_robin_evaluation, save_comprehensive_results
+from response_generator import generate_all_responses_with_reasoning
+from round_robin_evaluator import comprehensive_round_robin_evaluation
 from realtime_detector import is_realtime_prompt
 from search_fallback import get_google_snippets
-from llm_prompt_eval_analysis import generate_visualizations, analyze_evaluation_data
 
-# Load environment variables
-from dotenv import load_dotenv
 load_dotenv()
+pio.kaleido.scope.default_format = "png"
 
-def check_api_keys():
-    """Check if all required API keys are available."""
-    keys_status = {}
-    
-    # Check OpenAI
-    openai_key = os.getenv("OPENAI_API_KEY")
-    keys_status["OpenAI (GPT-4)"] = "Available" if openai_key else "Missing"
-    
-    # Check Claude
-    claude_key = os.getenv("CLAUDE_API_KEY")
-    keys_status["Claude 3"] = "Available" if claude_key else "Missing"
-    
-    # Check Gemini
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    keys_status["Gemini 1.5"] = "Available" if gemini_key else "Missing"
-    
-    # Check Google Search (optional)
-    google_key = os.getenv("GOOGLE_API_KEY")
-    google_cse = os.getenv("GOOGLE_CSE_ID")
-    keys_status["Google Search"] = "Available" if (google_key and google_cse) else "Missing"
-    
-    return keys_status
+metrics = ['helpfulness', 'correctness', 'coherence', 'tone_score',
+           'accuracy', 'relevance', 'completeness', 'clarity']
 
-def process_prompt(prompt, enable_realtime_detection, enable_evaluation, enable_analysis):
-    """Process a prompt through the complete pipeline."""
-    if not prompt.strip():
-        return "Please enter a prompt.", None, None, None, None, None
-    
-    results = {
-        "prompt": prompt,
-        "responses": {},
-        "evaluation": None,
-        "analysis": None,
-        "search_results": None,
-        "is_realtime": False
-    }
-    
-    # Step 1: Check if real-time detection is needed
-    if enable_realtime_detection:
-        try:
-            results["is_realtime"] = is_realtime_prompt(prompt)
-            if results["is_realtime"]:
-                # Get Google search results
-                search_results = get_google_snippets(prompt)
-                results["search_results"] = search_results
-                # Enhance prompt with search results
-                enhanced_prompt = f"{prompt}\n\nRecent information: {search_results}"
-            else:
-                enhanced_prompt = prompt
-        except Exception as e:
-            print(f"Real-time detection error: {e}")
-            enhanced_prompt = prompt
-    else:
-        enhanced_prompt = prompt
-    
-    # Step 2: Generate responses from all models
+def extract_text_from_resume(file):
+    ext = os.path.splitext(file.name)[1].lower()
+    if ext == ".pdf":
+        import fitz
+        with fitz.open(file.name) as doc:
+            return "\n".join(page.get_text() for page in doc)
+    elif ext == ".docx":
+        import docx
+        doc = docx.Document(file.name)
+        return "\n".join(p.text for p in doc.paragraphs)
+    elif ext == ".txt":
+        return file.read().decode('utf-8')
+    return ""
+
+def ats_score_advanced(response, resume, jd):
+    prompt = f"""
+You are a professional ATS scoring engine. Compare the generated response to the candidate's resume and job description using:
+1. Keyword Matching
+2. Section Weighting
+3. Semantic Similarity
+4. Recency/Frequency
+5. Penalty Detection
+6. Aggregation
+
+Resume:
+{resume}
+
+Job Description:
+{jd}
+
+Response:
+{response}
+
+Return JSON:
+{{"ats_score": <0-100>, "strengths": ["..."], "gaps": ["..."], "suggestions": ["..."]}}
+"""
+    from openai import OpenAI
+    openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     try:
-        responses = generate_all_responses(enhanced_prompt)
-        results["responses"] = responses
-    except Exception as e:
-        return f"Error generating responses: {e}", None, None, None, None, None
-    
-    # Step 3: Perform evaluation if requested
-    if enable_evaluation and responses:
-        try:
-            evaluation_results = comprehensive_round_robin_evaluation(responses, prompt)
-            results["evaluation"] = evaluation_results
-            
-            # Save results
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            csv_file = save_comprehensive_results(evaluation_results, prompt, timestamp)
-            
-        except Exception as e:
-            print(f"Evaluation error: {e}")
-    
-    # Step 4: Generate analysis if requested
-    if enable_analysis and results["evaluation"]:
-        try:
-            # Create a temporary DataFrame for analysis
-            analysis_data = []
-            for model, data in results["evaluation"].items():
-                for evaluator, eval_data in data.get('evaluations', {}).items():
+        res = openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+        return json.loads(res.choices[0].message.content.strip())
+    except:
+        return {"ats_score": 50, "strengths": [], "gaps": [], "suggestions": ["Check formatting."]}
+
+def create_visualizations(df, results_dir):
+    image_files = []
+    summary = df.groupby('target_model')[metrics].mean().reset_index()
+
+    heatmap = px.imshow(summary[metrics].values, x=metrics, y=summary['target_model'],
+                        labels=dict(x="Metric", y="Model", color="Score"),
+                        title="Heatmap: Metrics Across Models", color_continuous_scale='Viridis')
+    heatmap_path = os.path.join(results_dir, "heatmap.png")
+    heatmap.write_image(heatmap_path)
+    image_files.append(heatmap_path)
+
+    radar = go.Figure()
+    for _, row in summary.iterrows():
+        radar.add_trace(go.Scatterpolar(r=list(row[metrics]), theta=metrics, fill='toself', name=row['target_model']))
+    radar.update_layout(title="Radar Chart: Model Score Profiles", polar=dict(radialaxis=dict(visible=True, range=[0, 1])))
+    radar_path = os.path.join(results_dir, "radar.png")
+    radar.write_image(radar_path)
+    image_files.append(radar_path)
+
+    bar = px.bar(summary.melt(id_vars='target_model'), x='variable', y='value', color='target_model', barmode='group',
+                 title="Bar Chart: Metric Comparison")
+    bar_path = os.path.join(results_dir, "barchart.png")
+    bar.write_image(bar_path)
+    image_files.append(bar_path)
+
+    return (heatmap, radar, bar), image_files
+
+def format_ats_feedback(score, strengths, gaps, suggestions):
+    color = "🟢" if score >= 75 else "🟡" if score >= 50 else "🔴"
+    return f"""
+### ATS Match Score: ~{score}% {color}
+
+#### **Strengths / High Matches:**
+{chr(10).join([f"* {s}" for s in strengths]) if strengths else "* None found."}
+
+#### **Partial or Missing:**
+{chr(10).join([f"* {g}" for g in gaps]) if gaps else "* None mentioned."}
+
+#### **How to Improve ATS Score:**
+{chr(10).join([f"1. {s}" for s in suggestions]) if suggestions else "1. Add missing skills."}
+"""
+
+def process_prompt(prompt, enable_realtime, enable_eval, enable_analysis, user_file, model_selection):
+    selected_models = [m for m, enabled in zip(["GPT-4", "Claude 3", "Gemini 1.5"], model_selection) if enabled]
+    resume_text = ""
+    batch_mode = user_file and user_file.name.endswith(".csv")
+    resume_mode = user_file and user_file.name.lower().endswith(('.pdf', '.docx', '.txt'))
+
+    prompts = [prompt]
+    ats_summary_texts = []
+    search_results = ""
+
+    if batch_mode:
+        df_batch = pd.read_csv(user_file.name)
+        prompts = df_batch['prompt'].dropna().tolist()
+    elif resume_mode:
+        resume_text = extract_text_from_resume(user_file)
+
+    all_rows, all_charts = [], []
+    zip_path, ats_table_markdown = None, ""
+
+    for prompt_text in prompts:
+        search_results = get_google_snippets(prompt_text) if enable_realtime and is_realtime_prompt(prompt_text) else ""
+        final_prompt = f"{prompt_text}\n\nRecent info: {search_results}" if search_results else prompt_text
+        responses = generate_all_responses_with_reasoning(final_prompt, selected_models)
+
+        ats_rows = []
+        for model in responses:
+            model_resp = responses[model]['response']
+            if resume_text:
+                ats_result = ats_score_advanced(model_resp, resume_text, prompt_text)
+                feedback = format_ats_feedback(ats_result['ats_score'], ats_result.get('strengths', []), ats_result.get('gaps', []), ats_result.get('suggestions', []))
+                responses[model]['ats_embed'] = f"###  Response\n\n{model_resp}\n\n---\n\n###  ATS Evaluation\n\n{feedback}"
+                ats_rows.append(f"| {model} | {ats_result['ats_score']} | {', '.join(ats_result.get('strengths', []))} | {', '.join(ats_result.get('suggestions', []))} |")
+            else:
+                responses[model]['ats_embed'] = f"###  Response\n\n{model_resp}\n\n---\n\n**Explainability:**\n{responses[model]['reasoning']}"
+        if ats_rows:
+            ats_table_markdown = "| Model | Score | Strengths | Suggestions |\n|-------|-------|-----------|-------------|\n" + "\n".join(ats_rows)
+
+        if enable_eval:
+            compact = {k: v['response'] for k, v in responses.items()}
+            eval_result = comprehensive_round_robin_evaluation(compact, final_prompt)
+            for model, data in eval_result.items():
+                for evaluator, scores in data['evaluations'].items():
                     row = {
+                        'prompt': prompt_text,
                         'target_model': model,
                         'evaluator': evaluator,
-                        'helpfulness': eval_data.get('helpfulness', 0.5),
-                        'correctness': eval_data.get('correctness', 0.5),
-                        'coherence': eval_data.get('coherence', 0.5),
-                        'clarity': eval_data.get('clarity', 0.5),
-                        'response': data.get('response', '')
+                        'response': responses[model]['response'],
+                        'explainability': responses[model]['reasoning']
                     }
-                    analysis_data.append(row)
-            
-            if analysis_data:
-                df = pd.DataFrame(analysis_data)
-                results["analysis"] = df
-                
-        except Exception as e:
-            print(f"Analysis error: {e}")
-    
-    return format_results(results)
+                    row.update({k: scores.get(k, 0.5) for k in metrics})
+                    row.update({f"avg_{k}": data['average_scores'].get(k, 0.5) for k in metrics})
+                    all_rows.append(row)
 
-def format_results(results):
-    """Format results for Gradio display."""
-    prompt = results["prompt"]
-    responses = results["responses"]
-    evaluation = results["evaluation"]
-    analysis = results["analysis"]
-    search_results = results["search_results"]
-    is_realtime = results["is_realtime"]
-    
-    # Format responses
-    responses_text = ""
-    if responses:
-        responses_text = "MODEL RESPONSES:\n" + "="*50 + "\n"
-        for model, response in responses.items():
-            responses_text += f"\n{model}:\n{'-'*20}\n{response}\n"
-    else:
-        responses_text = "No responses generated. Check API keys."
-    
-    # Format evaluation results
-    evaluation_text = ""
-    if evaluation:
-        evaluation_text = "EVALUATION RESULTS:\n" + "="*50 + "\n"
-        for model, data in evaluation.items():
-            avg_scores = data.get('average_scores', {})
-            evaluation_text += f"\n{model} Average Scores:\n"
-            for metric, score in avg_scores.items():
-                evaluation_text += f"  {metric}: {score}\n"
-            evaluation_text += f"  Evaluated by: {list(data.get('evaluations', {}).keys())}\n"
-    else:
-        evaluation_text = "No evaluation performed."
-    
-    # Format search results
-    search_text = ""
-    if search_results and is_realtime:
-        search_text = "REAL-TIME SEARCH RESULTS:\n" + "="*50 + "\n"
-        search_text += search_results
-    elif is_realtime:
-        search_text = "Real-time query detected but search results unavailable."
-    else:
-        search_text = "Not a real-time query."
-    
-    # Create visualizations
-    charts = []
-    if analysis is not None and not analysis.empty:
-        charts = create_visualizations(analysis)
-    
-    return responses_text, evaluation_text, search_text, charts
+    df_all = pd.DataFrame(all_rows)
+    if not df_all.empty:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_dir = f"results/batch_{timestamp}"
+        os.makedirs(results_dir, exist_ok=True)
+        csv_path = os.path.join(results_dir, "evaluation.csv")
+        df_all.to_csv(csv_path, index=False)
+        (heatmap, radar, bar), chart_paths = create_visualizations(df_all, results_dir)
+        all_charts = [heatmap, radar, bar]
+        zip_path = os.path.join(results_dir, "bundle.zip")
+        with zipfile.ZipFile(zip_path, 'w') as zipf:
+            zipf.write(csv_path, arcname="evaluation.csv")
+            for chart in chart_paths:
+                zipf.write(chart, arcname=os.path.basename(chart))
+        if batch_mode:
+            df_batch['ATS Summary'] = ats_summary_texts
+            df_batch.to_csv(os.path.join(results_dir, "batch_prompts_output.csv"), index=False)
+            zipf.write(os.path.join(results_dir, "batch_prompts_output.csv"), arcname="batch_prompts_output.csv")
 
-def create_visualizations(df):
-    """Create Plotly visualizations for the analysis."""
-    charts = []
-    
-    try:
-        # 1. Model Performance Comparison
-        if 'target_model' in df.columns:
-            metrics = ['helpfulness', 'correctness', 'coherence', 'clarity']
-            
-            for metric in metrics:
-                if metric in df.columns:
-                    fig = px.box(df, x='target_model', y=metric, 
-                               title=f'{metric.title()} Scores by Model',
-                               color='target_model')
-                    fig.update_layout(showlegend=False)
-                    charts.append(fig)
-        
-        # 2. Evaluator Bias Analysis
-        if 'evaluator' in df.columns:
-            metrics = ['helpfulness', 'correctness', 'coherence', 'clarity']
-            
-            for metric in metrics:
-                if metric in df.columns:
-                    fig = px.box(df, x='evaluator', y=metric,
-                               title=f'{metric.title()} Scores by Evaluator',
-                               color='evaluator')
-                    fig.update_layout(showlegend=False)
-                    charts.append(fig)
-        
-        # 3. Heatmap of Cross-Evaluations
-        if 'target_model' in df.columns and 'evaluator' in df.columns and 'helpfulness' in df.columns:
-            pivot_data = df.pivot_table(
-                values='helpfulness',
-                index='target_model',
-                columns='evaluator',
-                aggfunc='mean'
-            ).fillna(0)
-            
-            fig = px.imshow(pivot_data.values,
-                           x=pivot_data.columns,
-                           y=pivot_data.index,
-                           title='Cross-Evaluation Heatmap (Helpfulness)',
-                           color_continuous_scale='RdYlBu_r',
-                           aspect='auto')
-            fig.update_layout(xaxis_title='Evaluator', yaxis_title='Target Model')
-            charts.append(fig)
-    
-    except Exception as e:
-        print(f"Visualization error: {e}")
-    
-    return charts
+    return tuple(
+        responses[model].get('ats_embed', responses[model]['response']) for model in ["GPT-4", "Claude 3", "Gemini 1.5"]
+    ) + (
+        search_results or "N/A",
+        *all_charts,
+        df_all[['target_model', 'evaluator'] + metrics] if not df_all.empty else pd.DataFrame(),
+        ats_table_markdown,
+        zip_path
+    )
 
-def export_results(responses_text, evaluation_text, search_text):
-    """Export results to a text file."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"results/export_{timestamp}.txt"
-    
-    os.makedirs("results", exist_ok=True)
-    
-    with open(filename, 'w', encoding='utf-8') as f:
-        f.write("LLM COMPARISON RESULTS\n")
-        f.write("="*50 + "\n")
-        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        
-        f.write(responses_text + "\n\n")
-        f.write(evaluation_text + "\n\n")
-        f.write(search_text + "\n\n")
-    
-    return f"Results exported to {filename}"
+def download_results(path):
+    return path if path and os.path.exists(path) else None
 
-# Create Gradio interface
 def create_interface():
-    """Create the Gradio interface."""
-    
-    # Check API keys
-    api_status = check_api_keys()
-    api_status_text = "API KEY STATUS:\n" + "="*30 + "\n"
-    for service, status in api_status.items():
-        api_status_text += f"{service}: {status}\n"
-    
-    with gr.Blocks(title="LLM Comparison Hub", theme=gr.themes.Soft()) as interface:
-        gr.Markdown("# LLM Comparison Hub")
-        gr.Markdown("Compare responses from GPT-4, Claude 3, and Gemini 1.5 with comprehensive evaluation and analysis.")
-        
+    with gr.Blocks(title="LLM Comparison Hub") as demo:
+        gr.Markdown("""
+# LLM Comparison Hub
+This app compares LLM responses using round-robin evaluations, with real-time query detection and comprehensive analysis.
+
+**How to use:**
+- Enter a prompt (JD or query)
+- Upload a resume (PDF/DOCX/TXT) or a CSV with prompts
+- Select models
+- Click evaluate
+
+**Features:**
+- Real-time web search fallback
+- Resume vs JD ATS scoring (optional)
+- Batch CSV prompt evaluation
+- Visualizations (Heatmap, Radar, Bar)
+- ZIP export of all results
+""")
         with gr.Row():
-            with gr.Column(scale=2):
-                # Input section
-                gr.Markdown("## Input")
-                prompt_input = gr.Textbox(
-                    label="Enter your prompt",
-                    placeholder="Type your question or prompt here...",
-                    lines=4
-                )
-                
-                with gr.Row():
-                    realtime_checkbox = gr.Checkbox(label="Enable real-time detection", value=True)
-                    evaluation_checkbox = gr.Checkbox(label="Enable evaluation", value=True)
-                    analysis_checkbox = gr.Checkbox(label="Enable analysis", value=True)
-                
-                process_btn = gr.Button("Process Prompt", variant="primary")
-                
-                # API status
-                gr.Markdown("## API Status")
-                api_status_display = gr.Textbox(
-                    value=api_status_text,
-                    label="API Keys",
-                    lines=len(api_status) + 3,
-                    interactive=False
-                )
-            
-            with gr.Column(scale=3):
-                # Output section
-                gr.Markdown("## Results")
-                
+            with gr.Column():
+                prompt = gr.Textbox(label="Enter Prompt", lines=4)
+                user_file = gr.File(label="Upload Resume or CSV", file_types=[".pdf", ".docx", ".txt", ".csv"])
+                model_selector = gr.CheckboxGroup(label="Select Models", choices=["GPT-4", "Claude 3", "Gemini 1.5"], value=["GPT-4", "Claude 3", "Gemini 1.5"])
+                enable_realtime = gr.Checkbox(label="Enable real-time detection", value=True)
+                enable_eval = gr.Checkbox(label="Enable evaluation", value=True)
+                enable_analysis = gr.Checkbox(label="Enable analysis", value=True)
+                submit = gr.Button("Run Evaluation")
+
+            with gr.Column():
                 with gr.Tabs():
-                    with gr.TabItem("Responses"):
-                        responses_output = gr.Textbox(
-                            label="Model Responses",
-                            lines=15,
-                            interactive=False
-                        )
-                    
-                    with gr.TabItem("Evaluation"):
-                        evaluation_output = gr.Textbox(
-                            label="Evaluation Results",
-                            lines=15,
-                            interactive=False
-                        )
-                    
-                    with gr.TabItem("Search Results"):
-                        search_output = gr.Textbox(
-                            label="Real-time Search Results",
-                            lines=10,
-                            interactive=False
-                        )
-                    
-                    with gr.TabItem("Visualizations"):
-                        charts_output = gr.Plot(label="Analysis Charts")
-                
-                # Export button
-                export_btn = gr.Button("Export Results")
-                export_output = gr.Textbox(label="Export Status", interactive=False)
-        
-        # Event handlers
-        process_btn.click(
+                    with gr.Tab("GPT-4"): gpt_out = gr.Markdown()
+                    with gr.Tab("Claude 3"): claude_out = gr.Markdown()
+                    with gr.Tab("Gemini 1.5"): gemini_out = gr.Markdown()
+                    with gr.Tab("Evaluation Table"): df_out = gr.Dataframe()
+                    with gr.Tab("ATS Evaluation"): ats_summary = gr.Markdown()
+                    with gr.Tab("Search Results"): search_out = gr.Markdown()
+                    with gr.Tab("Visualizations"):
+                        heatmap_plot = gr.Plot()
+                        radar_plot = gr.Plot()
+                        bar_plot = gr.Plot()
+                export_btn = gr.Button("Download ZIP Bundle")
+                zip_output = gr.File(file_types=[".zip"], interactive=False, visible=True)
+
+        submit.click(
             fn=process_prompt,
-            inputs=[prompt_input, realtime_checkbox, evaluation_checkbox, analysis_checkbox],
-            outputs=[responses_output, evaluation_output, search_output, charts_output]
+            inputs=[prompt, enable_realtime, enable_eval, enable_analysis, user_file, model_selector],
+            outputs=[gpt_out, claude_out, gemini_out, search_out, heatmap_plot, radar_plot, bar_plot, df_out, ats_summary, zip_output]
         )
-        
-        export_btn.click(
-            fn=export_results,
-            inputs=[responses_output, evaluation_output, search_output],
-            outputs=[export_output]
-        )
-    
-    return interface
+        export_btn.click(download_results, inputs=[zip_output], outputs=[zip_output])
+
+    return demo
 
 if __name__ == "__main__":
-    # Create and launch the interface
-    interface = create_interface()
-    interface.launch(
-        server_name="0.0.0.0",
-        server_port=7860,
-        share=False,
-        debug=True
-    ) 
+    app = create_interface()
+    app.launch(server_name="0.0.0.0", server_port=7860, share=False, debug=True)

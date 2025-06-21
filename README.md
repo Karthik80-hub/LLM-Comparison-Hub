@@ -29,6 +29,7 @@ This application provides a complete LLM comparison and evaluation system that g
 - **Modular Architecture**: Clean, production-ready code with separated concerns
 - **Gradio Web Interface**: User-friendly web UI for all features
 - **Export Capabilities**: ZIP bundles with all results and visualizations
+- **Automated Deployment**: GitHub Actions for continuous deployment to Hugging Face Spaces
 
 ## Project Architecture
 
@@ -49,7 +50,7 @@ This application provides a complete LLM comparison and evaluation system that g
 
 - **`requirements.txt`** - Python dependencies and versions
 - **`.env`** - API keys and configuration (create this file)
-- **`information`** - Detailed project documentation and file descriptions
+- **`.github/workflows/deploy-to-hf.yml`** - GitHub Actions for automated deployment
 
 ## Installation
 
@@ -199,6 +200,48 @@ When a resume and job description are provided, the system performs ATS (Applica
 | `search_fallback.py` | Google search integration |
 | `llm_prompt_eval_analysis.py` | Data analysis and visualization |
 
+## Deployment
+
+### Automated Deployment with GitHub Actions
+
+The project includes automated deployment to Hugging Face Spaces using GitHub Actions:
+
+#### Setup Requirements
+
+1. **Hugging Face Access Token**:
+   - Go to [Hugging Face Settings](https://huggingface.co/settings/tokens)
+   - Create a new token with **Write** permissions
+   - Copy the token (starts with `hf_...`)
+
+2. **GitHub Repository Secrets**:
+   - Go to your GitHub repository Settings
+   - Navigate to Secrets and variables → Actions
+   - Add a new repository secret:
+     - **Name**: `HF_TOKEN`
+     - **Value**: Your Hugging Face token
+
+#### Deployment Workflow
+
+The `.github/workflows/deploy-to-hf.yml` file automatically:
+- Triggers on pushes to the main branch
+- Deploys changes to Hugging Face Spaces
+- Maintains continuous integration
+
+#### Usage
+
+After setup, simply push to GitHub:
+```bash
+git add .
+git commit -m "Update application"
+git push origin main
+```
+
+The GitHub Action will automatically deploy to Hugging Face Spaces.
+
+### Manual Deployment
+
+For local deployment, ensure all dependencies are installed and API keys are configured.
+
 ## Error Handling
 
 The system includes comprehensive error handling:
@@ -222,14 +265,6 @@ The system includes comprehensive error handling:
 4. Update documentation for new features
 5. Test all modules independently
 
-## Deployment
-
-### Hugging Face Spaces
-The application is deployed on Hugging Face Spaces for easy access and sharing.
-
-### Local Deployment
-For local deployment, ensure all dependencies are installed and API keys are configured.
-
 ## Contributing
 
 1. Follow the established modular architecture
@@ -249,7 +284,7 @@ For issues and questions:
 2. Verify all dependencies are installed correctly
 3. Review error messages in the console output
 4. Check the results directory for output files
-5. Consult the `information` file for detailed module descriptions
+5. Consult the project documentation for detailed module descriptions
 
 ## Live Application
 

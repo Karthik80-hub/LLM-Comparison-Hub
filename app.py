@@ -76,22 +76,22 @@ def create_visualizations(df, results_dir):
     heatmap = px.imshow(summary[metrics].values, x=metrics, y=summary['target_model'],
                         labels=dict(x="Metric", y="Model", color="Score"),
                         title="Heatmap: Metrics Across Models", color_continuous_scale='Viridis')
-    heatmap_path = os.path.join(results_dir, "heatmap.png")
-    heatmap.write_image(heatmap_path)
+    heatmap_path = os.path.join(results_dir, "heatmap.html")
+    heatmap.write_html(heatmap_path)
     image_files.append(heatmap_path)
 
     radar = go.Figure()
     for _, row in summary.iterrows():
         radar.add_trace(go.Scatterpolar(r=list(row[metrics]), theta=metrics, fill='toself', name=row['target_model']))
     radar.update_layout(title="Radar Chart: Model Score Profiles", polar=dict(radialaxis=dict(visible=True, range=[0, 1])))
-    radar_path = os.path.join(results_dir, "radar.png")
-    radar.write_image(radar_path)
+    radar_path = os.path.join(results_dir, "radar.html")
+    radar.write_html(radar_path)
     image_files.append(radar_path)
 
     bar = px.bar(summary.melt(id_vars='target_model'), x='variable', y='value', color='target_model', barmode='group',
                  title="Bar Chart: Metric Comparison")
-    bar_path = os.path.join(results_dir, "barchart.png")
-    bar.write_image(bar_path)
+    bar_path = os.path.join(results_dir, "barchart.html")
+    bar.write_html(bar_path)
     image_files.append(bar_path)
 
     return (heatmap, radar, bar), image_files

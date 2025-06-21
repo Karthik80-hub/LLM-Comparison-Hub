@@ -3,7 +3,7 @@ title: LLM Comparison Hub
 colorFrom: blue
 colorTo: green
 sdk: gradio
-sdk_version: "4.0.0"
+sdk_version: "5.34.2"
 app_file: app.py
 pinned: false
 ---
@@ -16,7 +16,7 @@ A comprehensive tool for comparing responses from multiple Large Language Models
 
 ## Overview
 
-This application provides a complete LLM comparison and evaluation system that generates responses from multiple models, performs round-robin evaluations where each model evaluates all others, and provides comprehensive analysis with visualizations.
+This application provides a complete LLM comparison and evaluation system that generates responses from multiple models, performs round-robin evaluations where each model evaluates all others, and provides comprehensive analysis with interactive visualizations.
 
 ## Key Features
 
@@ -24,11 +24,11 @@ This application provides a complete LLM comparison and evaluation system that g
 - **Round-Robin Evaluation System**: Each model evaluates all other models for comprehensive comparison
 - **Real-time Query Detection**: Automatically detect and enhance real-time queries with Google search
 - **ATS Scoring**: Resume vs Job Description matching with detailed feedback
-- **Data Analysis & Visualization**: Generate charts, heatmaps, and performance reports
+- **Interactive Data Analysis & Visualization**: Generate interactive charts, heatmaps, and performance reports
 - **Batch Processing**: Handle multiple prompts from CSV files
 - **Modular Architecture**: Clean, production-ready code with separated concerns
 - **Gradio Web Interface**: User-friendly web UI for all features
-- **Export Capabilities**: ZIP bundles with all results and visualizations
+- **Export Capabilities**: ZIP bundles with all results and interactive visualizations
 - **Automated Deployment**: GitHub Actions for continuous deployment to Hugging Face Spaces
 
 ## Project Architecture
@@ -93,8 +93,8 @@ python app.py
 
 The interface provides:
 - **Input Section**: Enter prompts, upload files, and configure options
-- **Results Tabs**: View responses, evaluations, search results, and visualizations
-- **Export Options**: Download results as ZIP bundles
+- **Results Tabs**: View responses, evaluations, search results, and interactive visualizations
+- **Export Options**: Download results as ZIP bundles with interactive HTML charts
 - **Real-time Features**: Automatic query detection and search enhancement
 
 ### Standalone Tools
@@ -172,12 +172,13 @@ When a resume and job description are provided, the system performs ATS (Applica
 ### Generated Files
 - **CSV Files**: Comprehensive evaluation results with timestamps
 - **Analysis Reports**: Detailed analysis and insights
-- **Visualizations**: Charts and graphs in PNG format
-- **Export Bundles**: ZIP files containing all results
+- **Interactive Visualizations**: Interactive HTML charts and graphs
+- **Export Bundles**: ZIP files containing all results and interactive charts
 
 ### File Naming Convention
 - `evaluation_YYYYMMDD_HHMMSS.csv` - Evaluation results
 - `batch_YYYYMMDD_HHMMSS/` - Results directory
+- `heatmap.html`, `radar.html`, `barchart.html` - Interactive visualization files
 - `bundle.zip` - Complete export package
 
 ## Technical Architecture
@@ -188,6 +189,7 @@ When a resume and job description are provided, the system performs ATS (Applica
 - **Error Handling**: Comprehensive error handling and logging
 - **Reusable Components**: Modules can be used independently
 - **Configurable**: Easy to modify and extend
+- **Hugging Face Compatible**: No external browser dependencies for chart generation
 
 ### Module Responsibilities
 

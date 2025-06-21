@@ -288,4 +288,4 @@ For issues and questions:
 
 ## Live Application
 
-Access the live application at: [https://huggingface.co/spaces/chunchu-08/LLM-Comparison-Hub](https://huggingface.co/spaces/chunchu-08/LLM-Comparison-Hub) 
+Access the live application at: [https://huggingface.co/spaces/chunchu-08/LLM-Comparison-Hub](https://huggingface.co/spaces/chunchu-08/LLM-Comparison-Hub) "<!-- trigger deploy -->" 

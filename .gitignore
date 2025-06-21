@@ -107,4 +107,5 @@ flagged/
 
 # Search results and cached data
 search_cache/
-cache/ 
+cache/
+repo/

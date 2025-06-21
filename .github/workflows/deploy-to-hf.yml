@@ -8,15 +8,13 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout GitHub repo
-        uses: actions/checkout@v3
-
-      - name: Deploy to Hugging Face
+      - name: Clone GitHub repo cleanly
         run: |
-          git config --global user.name "chunchu-08"
-          git config --global user.email "chunchukarthik200@gmail.com"
-          git remote add hf https://huggingface.co/spaces/chunchu-08/LLM-Comparison-Hub
-          git fetch hf
-          git push hf HEAD:main --force
+          git clone https://github.com/Karthik80-hub/LLM-Comparison-Hub.git repo
+          cd repo
+          git config user.name "Karthik80-hub"
+          git config user.email "chunchukarthik200@gmail.com"
+          git remote add hf https://huggingface:$HF_TOKEN@huggingface.co/spaces/chunchu-08/LLM-Comparison-Hub
+          git push --force hf main
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}

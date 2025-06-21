@@ -1,34 +1,64 @@
+---
+title: LLM Comparison Hub
+colorFrom: blue
+colorTo: green
+sdk: gradio
+sdk_version: "4.0.0"
+app_file: app.py
+pinned: false
+---
+
 # LLM Comparison Hub
 
 A comprehensive tool for comparing responses from multiple Large Language Models (GPT-4, Claude 3, Gemini 1.5) with built-in evaluation, analysis, and visualization capabilities.
 
-## Features
+**Live Demo:** [https://huggingface.co/spaces/chunchu-08/LLM-Comparison-Hub](https://huggingface.co/spaces/chunchu-08/LLM-Comparison-Hub)
+
+## Overview
+
+This application provides a complete LLM comparison and evaluation system that generates responses from multiple models, performs round-robin evaluations where each model evaluates all others, and provides comprehensive analysis with visualizations.
+
+## Key Features
 
 - **Multi-Model Response Generation**: Generate responses from GPT-4, Claude 3, and Gemini 1.5
-- **Comprehensive Evaluation**: Round-robin evaluation where each model evaluates all others
+- **Round-Robin Evaluation System**: Each model evaluates all other models for comprehensive comparison
 - **Real-time Query Detection**: Automatically detect and enhance real-time queries with Google search
-- **Data Analysis & Visualization**: Generate charts and analysis reports
+- **ATS Scoring**: Resume vs Job Description matching with detailed feedback
+- **Data Analysis & Visualization**: Generate charts, heatmaps, and performance reports
+- **Batch Processing**: Handle multiple prompts from CSV files
 - **Modular Architecture**: Clean, production-ready code with separated concerns
 - **Gradio Web Interface**: User-friendly web UI for all features
+- **Export Capabilities**: ZIP bundles with all results and visualizations
 
-## Project Structure
+## Project Architecture
 
-### Core Modules
+### Core Application Files
 
-- **`gradio_full_llm_eval.py`** - Main Gradio web interface (UI orchestration only)
-- **`response_generator.py`** - Handles all LLM response generation
-- **`round_robin_evaluator.py`** - Handles comprehensive model evaluation
-- **`realtime_detector.py`** - Detects real-time queries
-- **`search_fallback.py`** - Integrates Google search for real-time information
-- **`llm_prompt_eval_analysis.py`** - Data analysis and visualization
+- **`app.py`** - Main Gradio web interface (UI orchestration and deployment)
+- **`response_generator.py`** - Handles all LLM response generation and comparison
+- **`round_robin_evaluator.py`** - Comprehensive model evaluation system
+- **`llm_prompt_eval_analysis.py`** - Data analysis and visualization engine
+- **`llm_response_logger.py`** - Quick testing and logging tool
+
+### Supporting Modules
+
+- **`realtime_detector.py`** - Detects real-time queries that need current information
+- **`search_fallback.py`** - Integrates Google search for real-time information enhancement
 
 ### Configuration Files
 
-- **`requirements.txt`** - Python dependencies
+- **`requirements.txt`** - Python dependencies and versions
 - **`.env`** - API keys and configuration (create this file)
-- **`README.md`** - This documentation
+- **`information`** - Detailed project documentation and file descriptions
 
 ## Installation
+
+### Prerequisites
+
+- Python 3.8 or higher
+- API keys for OpenAI, Anthropic, and Google Generative AI
+
+### Setup Instructions
 
 1. **Clone the repository**:
    ```bash
@@ -41,7 +71,7 @@ A comprehensive tool for comparing responses from multiple Large Language Models
    pip install -r requirements.txt
    ```
 
-3. **Set up API keys**:
+3. **Configure API keys**:
    Create a `.env` file in the project root with your API keys:
    ```
    OPENAI_API_KEY=your_openai_key_here
@@ -57,18 +87,18 @@ A comprehensive tool for comparing responses from multiple Large Language Models
 
 Launch the Gradio web interface:
 ```bash
-python gradio_full_llm_eval.py
+python app.py
 ```
 
 The interface provides:
-- **Input Section**: Enter prompts and configure options
+- **Input Section**: Enter prompts, upload files, and configure options
 - **Results Tabs**: View responses, evaluations, search results, and visualizations
-- **API Status**: Check which API keys are available
-- **Export**: Save results to files
+- **Export Options**: Download results as ZIP bundles
+- **Real-time Features**: Automatic query detection and search enhancement
 
 ### Standalone Tools
 
-Each module can be used independently:
+Each module can be used independently for specific tasks:
 
 #### Response Generator
 ```bash
@@ -76,21 +106,23 @@ python response_generator.py
 ```
 - Interactive mode for single prompts
 - Batch mode for multiple prompts from file
+- Side-by-side response comparison
 
 #### Round-Robin Evaluator
 ```bash
 python round_robin_evaluator.py
 ```
 - Test the evaluation system
-- View evaluation metrics
+- View evaluation metrics and scores
+- Export results to CSV
 
 #### Analysis Tool
 ```bash
 python llm_prompt_eval_analysis.py
 ```
 - Analyze latest CSV results
-- Generate visualizations
-- Create comprehensive reports
+- Generate visualizations and charts
+- Create comprehensive performance reports
 
 #### Response Logger
 ```bash
@@ -98,11 +130,12 @@ python llm_response_logger.py
 ```
 - Quick testing of all models
 - Batch testing from files
+- Rapid evaluation and logging
 
 ## API Requirements
 
 ### Required APIs
-- **OpenAI API**: For GPT-4 responses
+- **OpenAI API**: For GPT-4 responses and ATS scoring
 - **Anthropic API**: For Claude 3 responses
 - **Google Generative AI**: For Gemini 1.5 responses
 
@@ -111,35 +144,47 @@ python llm_response_logger.py
 
 ## Evaluation Metrics
 
-The system evaluates responses on multiple criteria:
+The system evaluates responses on eight comprehensive criteria:
+
 - **Helpfulness**: How useful and informative is the response?
 - **Correctness**: How accurate and factually correct is the response?
 - **Coherence**: How well-structured and logical is the response?
-- **Tone**: How appropriate and professional is the tone?
+- **Tone Score**: How appropriate and professional is the tone?
 - **Accuracy**: How precise and detailed is the information?
 - **Relevance**: How well does the response address the prompt?
 - **Completeness**: How comprehensive is the response?
 - **Clarity**: How clear and easy to understand is the response?
 
-## Output Files
+## ATS Scoring System
 
-### Results Directory
+When a resume and job description are provided, the system performs ATS (Applicant Tracking System) scoring:
+
+- **Keyword Matching**: Identifies relevant skills and qualifications
+- **Section Weighting**: Prioritizes important sections
+- **Semantic Similarity**: Analyzes meaning and context
+- **Recency/Frequency**: Considers experience relevance
+- **Penalty Detection**: Identifies potential issues
+- **Aggregation**: Provides overall match score
+
+## Output and Results
+
+### Generated Files
 - **CSV Files**: Comprehensive evaluation results with timestamps
 - **Analysis Reports**: Detailed analysis and insights
 - **Visualizations**: Charts and graphs in PNG format
-- **Export Files**: Text exports of complete results
+- **Export Bundles**: ZIP files containing all results
 
 ### File Naming Convention
-- `comprehensive_eval_YYYYMMDD_HHMMSS.csv` - Evaluation results
-- `evaluation_report_YYYYMMDD_HHMMSS.txt` - Analysis reports
-- `export_YYYYMMDD_HHMMSS.txt` - Exported results
+- `evaluation_YYYYMMDD_HHMMSS.csv` - Evaluation results
+- `batch_YYYYMMDD_HHMMSS/` - Results directory
+- `bundle.zip` - Complete export package
 
-## Modular Architecture
+## Technical Architecture
 
 ### Design Principles
 - **Separation of Concerns**: Each file has a specific responsibility
-- **Clean Code**: No emojis or decorative symbols
-- **Production Ready**: Error handling and logging throughout
+- **Clean Code**: Production-ready without decorative elements
+- **Error Handling**: Comprehensive error handling and logging
 - **Reusable Components**: Modules can be used independently
 - **Configurable**: Easy to modify and extend
 
@@ -147,7 +192,7 @@ The system evaluates responses on multiple criteria:
 
 | Module | Responsibility |
 |--------|---------------|
-| `gradio_full_llm_eval.py` | UI orchestration and display |
+| `app.py` | UI orchestration and deployment |
 | `response_generator.py` | LLM API calls and response collection |
 | `round_robin_evaluator.py` | Model evaluation and scoring |
 | `realtime_detector.py` | Real-time query detection |
@@ -157,18 +202,41 @@ The system evaluates responses on multiple criteria:
 ## Error Handling
 
 The system includes comprehensive error handling:
-- **API Failures**: Graceful handling of API errors
+- **API Failures**: Graceful handling of API errors with fallback options
 - **Missing Keys**: Clear indication of missing API keys
-- **Network Issues**: Retry logic and fallback options
+- **Network Issues**: Retry logic and connection management
 - **Data Validation**: Input validation and sanitization
+- **File Processing**: Robust handling of various file formats
 
-## Contributing
+## Development and Testing
 
+### Testing Tools
+- **`test_standalone_tools.py`**: Demonstrates usage of all standalone tools
+- **Batch Testing**: Process multiple prompts efficiently
+- **Performance Monitoring**: Track evaluation metrics over time
+
+### Development Guidelines
 1. Follow the modular architecture
 2. Maintain clean, production-ready code
 3. Add proper error handling
 4. Update documentation for new features
 5. Test all modules independently
+
+## Deployment
+
+### Hugging Face Spaces
+The application is deployed on Hugging Face Spaces for easy access and sharing.
+
+### Local Deployment
+For local deployment, ensure all dependencies are installed and API keys are configured.
+
+## Contributing
+
+1. Follow the established modular architecture
+2. Maintain clean, production-ready code standards
+3. Add comprehensive error handling
+4. Update documentation for any new features
+5. Test all modules independently before submission
 
 ## License
 
@@ -177,7 +245,12 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Support
 
 For issues and questions:
-1. Check the API key configuration
-2. Verify all dependencies are installed
-3. Review the error messages in the console
-4. Check the results directory for output files 
+1. Check the API key configuration in `.env`
+2. Verify all dependencies are installed correctly
+3. Review error messages in the console output
+4. Check the results directory for output files
+5. Consult the `information` file for detailed module descriptions
+
+## Live Application
+
+Access the live application at: [https://huggingface.co/spaces/chunchu-08/LLM-Comparison-Hub](https://huggingface.co/spaces/chunchu-08/LLM-Comparison-Hub) 

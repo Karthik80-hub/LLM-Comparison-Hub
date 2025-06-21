@@ -19,4 +19,6 @@ jobs:
           git config user.name "Karthik80-hub"
           git config user.email "chunchukarthik200@gmail.com"
           git remote add hf https://huggingface:$HF_TOKEN@huggingface.co/spaces/chunchu-08/LLM-Comparison-Hub
+          git fetch hf main || true
+          git pull --rebase hf main || true
           git push --force hf main

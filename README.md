@@ -20,37 +20,70 @@ This application provides a complete LLM comparison and evaluation system that g
 
 ## Key Features
 
-- **Multi-Model Response Generation**: Generate responses from GPT-4, Claude 3, and Gemini 1.5
-- **Round-Robin Evaluation System**: Each model evaluates all other models for comprehensive comparison
-- **Real-time Query Detection**: Automatically detect and enhance real-time queries with Google search
-- **ATS Scoring**: Resume vs Job Description matching with detailed feedback
-- **Interactive Data Analysis & Visualization**: Generate interactive charts, heatmaps, and performance reports
-- **Batch Processing**: Handle multiple prompts from CSV files
-- **Modular Architecture**: Clean, production-ready code with separated concerns
-- **Gradio Web Interface**: User-friendly web UI for all features
-- **Export Capabilities**: ZIP bundles with all results and interactive visualizations
-- **Automated Deployment**: GitHub Actions for continuous deployment to Hugging Face Spaces
+- **Multi-Model Response Generation**: Dynamically generate responses from any combination of GPT-4, Claude 3, and Gemini 1.5 using a simple model selector.
+- **Dynamic Round-Robin Evaluation**: A robust evaluation system where selected models evaluate each other. If a model is deselected, the evaluation logic adapts automatically.
+- **Real-time Query Detection**: Automatically detects if a prompt requires current information and fetches it using a Google search fallback.
+- **ATS Scoring**: Performs detailed resume vs. job description matching and scoring.
+- **Interactive Data Analysis & Visualization**: Generates consistent, professionally styled charts (Heatmap, Radar, Bar) for all prompt types.
+- **Batch Processing**: Handles multiple prompts from CSV files.
+- **Modular Architecture**: A clean, production-ready codebase with a new `universal_model_wrapper.py` that centralizes core logic.
+- **Gradio Web Interface**: A user-friendly web UI with a model selector to easily choose which LLMs to run.
+- **Export Capabilities**: Download a ZIP bundle with all evaluation results and interactive HTML charts.
+- **Automated Deployment**: GitHub Actions for continuous deployment to Hugging Face Spaces.
 
 ## Project Architecture
 
+The architecture has been refactored for simplicity and robustness.
+
 ### Core Application Files
 
-- **`app.py`** - Main Gradio web interface (UI orchestration and deployment)
-- **`response_generator.py`** - Handles all LLM response generation and comparison
-- **`round_robin_evaluator.py`** - Comprehensive model evaluation system
-- **`llm_prompt_eval_analysis.py`** - Data analysis and visualization engine
-- **`llm_response_logger.py`** - Quick testing and logging tool
+- **`app.py`** - Main Gradio web interface, including UI logic and the model selector.
+- **`universal_model_wrapper.py`** - **New core module!** Centralizes all LLM API calls, real-time detection, search fallback, and ATS/general prompt logic.
+- **`response_generator.py`** - A simplified wrapper that interfaces between the app and the `universal_model_wrapper`.
+- **`round_robin_evaluator.py`** - A dynamic evaluation engine that adapts to the models selected in the UI.
+- **`llm_prompt_eval_analysis.py`** - Data analysis and visualization engine.
+- **`llm_response_logger.py`** - Quick testing and logging tool.
 
 ### Supporting Modules
 
-- **`realtime_detector.py`** - Detects real-time queries that need current information
-- **`search_fallback.py`** - Integrates Google search for real-time information enhancement
+- **`search_fallback.py`**: This file is kept for reference, but its core functionality has been integrated into `universal_model_wrapper.py` for a more robust, self-contained architecture.
 
-### Configuration Files
+## Usage
 
-- **`requirements.txt`** - Python dependencies and versions
-- **`.env`** - API keys and configuration (create this file)
-- **`.github/workflows/deploy-to-hf.yml`** - GitHub Actions for automated deployment
+### Web Interface (Recommended)
+
+Launch the Gradio web interface:
+```bash
+python app.py
+```
+
+The interface provides:
+- **Input Section**: Enter prompts, upload files, and use the **Model Selector** checkboxes to choose which LLMs to run.
+- **Results Tabs**: View responses, evaluations, search results, and interactive visualizations.
+- **Export Options**: Download results as ZIP bundles with interactive HTML charts.
+- **Real-time Features**: Automatic query detection and search enhancement.
+
+### Model Selection
+The UI now includes a set of checkboxes allowing you to select any combination of models (GPT-4, Claude 3, Gemini 1.5) for a given query. The application, including the round-robin evaluation, will dynamically adapt to your selection.
+
+## Technical Architecture
+
+### Design Principles
+- **Centralized Logic**: The new `universal_model_wrapper.py` acts as a single source of truth for model interaction.
+- **Dynamic & Robust**: The evaluation system is no longer static and adapts to user input, preventing crashes when models are deselected.
+- **Separation of Concerns**: Each file has a clear, specific responsibility.
+- **Clean Code**: Production-ready and easy to maintain.
+- **Hugging Face Compatible**: No external browser dependencies for chart generation.
+
+### Module Responsibilities
+
+| Module | Responsibility |
+|--------|---------------|
+| `app.py` | UI orchestration, including the model selector and deployment. |
+| `universal_model_wrapper.py` | Handles all LLM calls, prompt logic, and search. |
+| `response_generator.py` | Connects the UI to the universal wrapper. |
+| `round_robin_evaluator.py` | Dynamically evaluates the currently selected models. |
+| `llm_prompt_eval_analysis.py` | Data analysis and visualization. |
 
 ## Installation
 
@@ -81,57 +114,6 @@ This application provides a complete LLM comparison and evaluation system that g
    GOOGLE_API_KEY=your_google_key_here
    GOOGLE_CSE_ID=your_google_cse_id_here
    ```
-
-## Usage
-
-### Web Interface (Recommended)
-
-Launch the Gradio web interface:
-```bash
-python app.py
-```
-
-The interface provides:
-- **Input Section**: Enter prompts, upload files, and configure options
-- **Results Tabs**: View responses, evaluations, search results, and interactive visualizations
-- **Export Options**: Download results as ZIP bundles with interactive HTML charts
-- **Real-time Features**: Automatic query detection and search enhancement
-
-### Standalone Tools
-
-Each module can be used independently for specific tasks:
-
-#### Response Generator
-```bash
-python response_generator.py
-```
-- Interactive mode for single prompts
-- Batch mode for multiple prompts from file
-- Side-by-side response comparison
-
-#### Round-Robin Evaluator
-```bash
-python round_robin_evaluator.py
-```
-- Test the evaluation system
-- View evaluation metrics and scores
-- Export results to CSV
-
-#### Analysis Tool
-```bash
-python llm_prompt_eval_analysis.py
-```
-- Analyze latest CSV results
-- Generate visualizations and charts
-- Create comprehensive performance reports
-
-#### Response Logger
-```bash
-python llm_response_logger.py
-```
-- Quick testing of all models
-- Batch testing from files
-- Rapid evaluation and logging
 
 ## API Requirements
 
@@ -181,113 +163,7 @@ When a resume and job description are provided, the system performs ATS (Applica
 - `heatmap.html`, `radar.html`, `barchart.html` - Interactive visualization files
 - `bundle.zip` - Complete export package
 
-## Technical Architecture
-
-### Design Principles
-- **Separation of Concerns**: Each file has a specific responsibility
-- **Clean Code**: Production-ready without decorative elements
-- **Error Handling**: Comprehensive error handling and logging
-- **Reusable Components**: Modules can be used independently
-- **Configurable**: Easy to modify and extend
-- **Hugging Face Compatible**: No external browser dependencies for chart generation
-
-### Module Responsibilities
-
-| Module | Responsibility |
-|--------|---------------|
-| `app.py` | UI orchestration and deployment |
-| `response_generator.py` | LLM API calls and response collection |
-| `round_robin_evaluator.py` | Model evaluation and scoring |
-| `realtime_detector.py` | Real-time query detection |
-| `search_fallback.py` | Google search integration |
-| `llm_prompt_eval_analysis.py` | Data analysis and visualization |
-
-## Deployment
-
-### Automated Deployment with GitHub Actions
-
-The project includes automated deployment to Hugging Face Spaces using GitHub Actions:
-
-#### Setup Requirements
-
-1. **Hugging Face Access Token**:
-   - Go to [Hugging Face Settings](https://huggingface.co/settings/tokens)
-   - Create a new token with **Write** permissions
-   - Copy the token (starts with `hf_...`)
-
-2. **GitHub Repository Secrets**:
-   - Go to your GitHub repository Settings
-   - Navigate to Secrets and variables → Actions
-   - Add a new repository secret:
-     - **Name**: `HF_TOKEN`
-     - **Value**: Your Hugging Face token
-
-#### Deployment Workflow
-
-The `.github/workflows/deploy-to-hf.yml` file automatically:
-- Triggers on pushes to the main branch
-- Deploys changes to Hugging Face Spaces
-- Maintains continuous integration
-
-#### Usage
-
-After setup, simply push to GitHub:
-```bash
-git add .
-git commit -m "Update application"
-git push origin main
-```
-
-The GitHub Action will automatically deploy to Hugging Face Spaces.
-
-### Manual Deployment
-
-For local deployment, ensure all dependencies are installed and API keys are configured.
-
-## Error Handling
-
-The system includes comprehensive error handling:
-- **API Failures**: Graceful handling of API errors with fallback options
-- **Missing Keys**: Clear indication of missing API keys
-- **Network Issues**: Retry logic and connection management
-- **Data Validation**: Input validation and sanitization
-- **File Processing**: Robust handling of various file formats
-
 ## Development and Testing
 
 ### Testing Tools
-- **`test_standalone_tools.py`**: Demonstrates usage of all standalone tools
-- **Batch Testing**: Process multiple prompts efficiently
-- **Performance Monitoring**: Track evaluation metrics over time
-
-### Development Guidelines
-1. Follow the modular architecture
-2. Maintain clean, production-ready code
-3. Add proper error handling
-4. Update documentation for new features
-5. Test all modules independently
-
-## Contributing
-
-1. Follow the established modular architecture
-2. Maintain clean, production-ready code standards
-3. Add comprehensive error handling
-4. Update documentation for any new features
-5. Test all modules independently before submission
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Support
-
-For issues and questions:
-1. Check the API key configuration in `.env`
-2. Verify all dependencies are installed correctly
-3. Review error messages in the console output
-4. Check the results directory for output files
-5. Consult the project documentation for detailed module descriptions
-
-## Live Application
-
-Access the live application at: [https://huggingface.co/spaces/chunchu-08/LLM-Comparison-Hub](https://huggingface.co/spaces/chunchu-08/LLM-Comparison-Hub) "<!-- trigger deploy -->" 
+- **`

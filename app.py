@@ -1,4 +1,4 @@
-# gradio_full_llm_eval.py – Final Updated Version with ATS Scoring and Visualized UI
+# app.py – Final Updated Version with Unified Visualization (Model selection-safe + Visualization Fixes)
 import gradio as gr
 import os
 import pandas as pd
@@ -12,8 +12,6 @@ from dotenv import load_dotenv
 
 from response_generator import generate_all_responses_with_reasoning
 from round_robin_evaluator import comprehensive_round_robin_evaluation
-from realtime_detector import is_realtime_prompt
-from search_fallback import get_google_snippets
 
 load_dotenv()
 pio.kaleido.scope.default_format = "png"
@@ -70,31 +68,72 @@ Return JSON:
         return {"ats_score": 50, "strengths": [], "gaps": [], "suggestions": ["Check formatting."]}
 
 def create_visualizations(df, results_dir):
-    image_files = []
+    html_files = []
     summary = df.groupby('target_model')[metrics].mean().reset_index()
+    font_style = dict(family="Arial, sans-serif", size=12, color="black")
 
-    heatmap = px.imshow(summary[metrics].values, x=metrics, y=summary['target_model'],
-                        labels=dict(x="Metric", y="Model", color="Score"),
-                        title="Heatmap: Metrics Across Models", color_continuous_scale='Viridis')
+    # 1. Heatmap with professional styling
+    heatmap = px.imshow(
+        summary[metrics].values,
+        x=metrics,
+        y=summary['target_model'],
+        labels=dict(x="Metric", y="Model", color="Score"),
+        title="<b>Heatmap: Metrics Across Models</b>",
+        color_continuous_scale='Viridis'
+    )
+    heatmap.update_layout(
+        margin=dict(l=80, r=40, t=80, b=120),
+        xaxis_tickangle=-45,
+        title_font=dict(size=18, family="Arial, sans-serif"),
+        font=font_style
+    )
     heatmap_path = os.path.join(results_dir, "heatmap.html")
     heatmap.write_html(heatmap_path)
-    image_files.append(heatmap_path)
+    html_files.append(heatmap_path)
 
+    # 2. Radar Chart with professional styling
     radar = go.Figure()
     for _, row in summary.iterrows():
-        radar.add_trace(go.Scatterpolar(r=list(row[metrics]), theta=metrics, fill='toself', name=row['target_model']))
-    radar.update_layout(title="Radar Chart: Model Score Profiles", polar=dict(radialaxis=dict(visible=True, range=[0, 1])))
+        radar.add_trace(go.Scatterpolar(
+            r=list(row[metrics]),
+            theta=metrics,
+            fill='toself',
+            name=row['target_model']
+        ))
+    radar.update_layout(
+        title="<b>Radar Chart: Model Score Profiles</b>",
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+        legend_title_text='Models',
+        title_font=dict(size=18, family="Arial, sans-serif"),
+        font=font_style,
+        margin=dict(l=60, r=60, t=80, b=80)
+    )
     radar_path = os.path.join(results_dir, "radar.html")
     radar.write_html(radar_path)
-    image_files.append(radar_path)
+    html_files.append(radar_path)
 
-    bar = px.bar(summary.melt(id_vars='target_model'), x='variable', y='value', color='target_model', barmode='group',
-                 title="Bar Chart: Metric Comparison")
+    # 3. Bar Chart with professional styling
+    bar = px.bar(
+        summary.melt(id_vars='target_model'),
+        x='variable',
+        y='value',
+        color='target_model',
+        barmode='group',
+        title="<b>Bar Chart: Metric Comparison</b>",
+        labels={'variable': 'Metric', 'value': 'Score', 'target_model': 'Model'}
+    )
+    bar.update_layout(
+        margin=dict(l=60, r=20, t=80, b=120),
+        xaxis_tickangle=-45,
+        legend_title_text='Model',
+        title_font=dict(size=18, family="Arial, sans-serif"),
+        font=font_style
+    )
     bar_path = os.path.join(results_dir, "barchart.html")
     bar.write_html(bar_path)
-    image_files.append(bar_path)
+    html_files.append(bar_path)
 
-    return (heatmap, radar, bar), image_files
+    return (heatmap, radar, bar), html_files
 
 def format_ats_feedback(score, strengths, gaps, suggestions):
     color = "🟢" if score >= 75 else "🟡" if score >= 50 else "🔴"
@@ -114,8 +153,9 @@ def format_ats_feedback(score, strengths, gaps, suggestions):
 def process_prompt(prompt, enable_realtime, enable_eval, enable_analysis, user_file, model_selection):
     selected_models = [m for m, enabled in zip(["GPT-4", "Claude 3", "Gemini 1.5"], model_selection) if enabled]
     resume_text = ""
-    batch_mode = user_file and user_file.name.endswith(".csv")
-    resume_mode = user_file and user_file.name.lower().endswith(('.pdf', '.docx', '.txt'))
+    job_description = prompt
+    batch_mode = user_file and hasattr(user_file, 'name') and user_file.name.endswith(".csv")
+    resume_mode = user_file and hasattr(user_file, 'name') and user_file.name.lower().endswith(('.pdf', '.docx', '.txt'))
 
     prompts = [prompt]
     ats_summary_texts = []
@@ -131,38 +171,49 @@ def process_prompt(prompt, enable_realtime, enable_eval, enable_analysis, user_f
     zip_path, ats_table_markdown = None, ""
 
     for prompt_text in prompts:
-        search_results = get_google_snippets(prompt_text) if enable_realtime and is_realtime_prompt(prompt_text) else ""
-        final_prompt = f"{prompt_text}\n\nRecent info: {search_results}" if search_results else prompt_text
-        responses = generate_all_responses_with_reasoning(final_prompt, selected_models)
+        responses = generate_all_responses_with_reasoning(
+            prompt_text,
+            selected_models,
+            resume_text if resume_mode else None,
+            job_description if resume_mode else None
+        )
+
+        if responses:
+            first_response = list(responses.values())[0]
+            search_results = first_response.get('search_results', '')
+            is_ats = first_response.get('is_ats', False)
 
         ats_rows = []
         for model in responses:
             model_resp = responses[model]['response']
-            if resume_text:
-                ats_result = ats_score_advanced(model_resp, resume_text, prompt_text)
-                feedback = format_ats_feedback(ats_result['ats_score'], ats_result.get('strengths', []), ats_result.get('gaps', []), ats_result.get('suggestions', []))
-                responses[model]['ats_embed'] = f"###  Response\n\n{model_resp}\n\n---\n\n###  ATS Evaluation\n\n{feedback}"
-                ats_rows.append(f"| {model} | {ats_result['ats_score']} | {', '.join(ats_result.get('strengths', []))} | {', '.join(ats_result.get('suggestions', []))} |")
-            else:
-                responses[model]['ats_embed'] = f"###  Response\n\n{model_resp}\n\n---\n\n**Explainability:**\n{responses[model]['reasoning']}"
+            model_reasoning = responses[model]['reasoning']
+            responses[model]['ats_embed'] = f"### Response\n\n{model_resp}\n\n---\n\n**Explainability:**\n{model_reasoning}"
+
+            if resume_mode and is_ats:
+                try:
+                    ats_result = ats_score_advanced(model_resp, resume_text, prompt_text)
+                    ats_rows.append(f"| {model} | {ats_result['ats_score']} | {', '.join(ats_result.get('strengths', []))} | {', '.join(ats_result.get('suggestions', []))} |")
+                except:
+                    ats_rows.append(f"| {model} | N/A | N/A | N/A |")
+
         if ats_rows:
             ats_table_markdown = "| Model | Score | Strengths | Suggestions |\n|-------|-------|-----------|-------------|\n" + "\n".join(ats_rows)
 
-        if enable_eval:
-            compact = {k: v['response'] for k, v in responses.items()}
-            eval_result = comprehensive_round_robin_evaluation(compact, final_prompt)
-            for model, data in eval_result.items():
-                for evaluator, scores in data['evaluations'].items():
-                    row = {
-                        'prompt': prompt_text,
-                        'target_model': model,
-                        'evaluator': evaluator,
-                        'response': responses[model]['response'],
-                        'explainability': responses[model]['reasoning']
-                    }
-                    row.update({k: scores.get(k, 0.5) for k in metrics})
-                    row.update({f"avg_{k}": data['average_scores'].get(k, 0.5) for k in metrics})
-                    all_rows.append(row)
+        # Always run evaluation to generate chart data
+        compact = {k: v['response'] for k, v in responses.items()}
+        eval_result = comprehensive_round_robin_evaluation(compact, prompt_text)
+        for model, data in eval_result.items():
+            for evaluator, scores in data['evaluations'].items():
+                row = {
+                    'prompt': prompt_text,
+                    'target_model': model,
+                    'evaluator': evaluator,
+                    'response': responses[model]['response'],
+                    'explainability': responses[model]['reasoning']
+                }
+                row.update({k: scores.get(k, 0.5) for k in metrics})
+                row.update({f"avg_{k}": data['average_scores'].get(k, 0.5) for k in metrics})
+                all_rows.append(row)
 
     df_all = pd.DataFrame(all_rows)
     if not df_all.empty:
@@ -182,14 +233,18 @@ def process_prompt(prompt, enable_realtime, enable_eval, enable_analysis, user_f
             df_batch['ATS Summary'] = ats_summary_texts
             df_batch.to_csv(os.path.join(results_dir, "batch_prompts_output.csv"), index=False)
             zipf.write(os.path.join(results_dir, "batch_prompts_output.csv"), arcname="batch_prompts_output.csv")
+    
+    # Conditional UI updates
+    eval_table = df_all[['target_model', 'evaluator'] + metrics] if not df_all.empty and enable_eval else pd.DataFrame()
+    ats_md = ats_table_markdown if resume_mode else ""
 
     return tuple(
         responses[model].get('ats_embed', responses[model]['response']) for model in ["GPT-4", "Claude 3", "Gemini 1.5"]
     ) + (
         search_results or "N/A",
         *all_charts,
-        df_all[['target_model', 'evaluator'] + metrics] if not df_all.empty else pd.DataFrame(),
-        ats_table_markdown,
+        eval_table,
+        ats_md,
         zip_path
     )
 
@@ -222,7 +277,7 @@ This app compares LLM responses using round-robin evaluations, with real-time qu
                 model_selector = gr.CheckboxGroup(label="Select Models", choices=["GPT-4", "Claude 3", "Gemini 1.5"], value=["GPT-4", "Claude 3", "Gemini 1.5"])
                 enable_realtime = gr.Checkbox(label="Enable real-time detection", value=True)
                 enable_eval = gr.Checkbox(label="Enable evaluation", value=True)
-                enable_analysis = gr.Checkbox(label="Enable analysis", value=True)
+                enable_analysis = gr.Checkbox(label="Enable analysis (currently not used)", value=True)
                 submit = gr.Button("Run Evaluation")
 
             with gr.Column():
